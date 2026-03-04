@@ -30,30 +30,30 @@ except Exception:
     requests = None
 
 
-# def require_password():
-#     if "APP_PASSWORD" not in st.secrets:
-#         st.error("Manjka APP_PASSWORD v Streamlit Secrets.")
-#         st.stop()
+def require_password():
+    if "APP_PASSWORD" not in st.secrets:
+        st.error("Manjka APP_PASSWORD v Streamlit Secrets.")
+        st.stop()
 
-#     if st.session_state.get("authenticated", False):
-#         return
+    if st.session_state.get("authenticated", False):
+        return
 
-#     st.title("Prijava")
+    st.title("Prijava")
 
-#     with st.form("login_form", clear_on_submit=False):
-#         pwd = st.text_input("Geslo", type="password")
-#         submitted = st.form_submit_button("Vstopi")
+    with st.form("login_form", clear_on_submit=False):
+        pwd = st.text_input("Geslo", type="password")
+        submitted = st.form_submit_button("Vstopi")
 
-#         if submitted:
-#             if hmac.compare_digest(pwd, st.secrets["APP_PASSWORD"]):
-#                 st.session_state["authenticated"] = True
-#                 st.rerun()
-#             else:
-#                 st.error("Napačno geslo.")
+        if submitted:
+            if hmac.compare_digest(pwd, st.secrets["APP_PASSWORD"]):
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Napačno geslo.")
 
-#     st.stop()
+    st.stop()
 
-# require_password()
+require_password()
 
 
 DATA_XLSX_DEFAULT = "Skupna tabela občine.xlsx"
