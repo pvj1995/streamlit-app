@@ -36,7 +36,10 @@ numpy==1.26.4
 openpyxl==3.1.5
 packaging==21.3
 pandas==2.2.2
+patsy==1.0.2
 Pillow==9.2.0
+plotly==6.5.1
+plotly-express==0.4.1
 protobuf==5.29.5
 psycopg2-binary==2.9.9
 pyarrow==22.0.0
@@ -61,6 +64,7 @@ six==1.16.0
 slack==0.0.2
 slack-sdk==3.18.4
 smmap==5.0.2
+statsmodels==0.14.6
 streamlit==1.36.0
 streamlit_folium==0.22.0
 tempdir==0.7.1
