@@ -7,6 +7,7 @@
 import json
 import re
 import hashlib
+import time
 from pathlib import Path
 import hmac
 import numpy as np
@@ -65,6 +66,13 @@ GROUP_COLOR_EMOJI = {
     "Ekonomski nastanitveni in tržni turistični kazalniki": "🟥",
     "Ekonomsko poslovni kazalniki turistične dejavnosti": "🟪",
 }
+TOP_BOTTOM_GROUP_LIMITS = {
+    "Družbeni kazalniki": 4,
+    "Okoljski kazalniki": 3,
+    "Ekonomski nastanitveni in tržni turistični kazalniki": 5,
+    "Ekonomsko poslovni kazalniki turistične dejavnosti": 5,
+}
+TOP_BOTTOM_GROUP_ORDER = list(TOP_BOTTOM_GROUP_LIMITS.keys())
 SLO_BOUNDS = [[41.00, 10.38], [49.88, 18.61]]
 
 AGG_RULES = {
@@ -237,6 +245,77 @@ AGG_RULES = {
     "Delež vseh prenočitev - Vsi drugi tuji trgi": ("wmean", "Prenočitve turistov SKUPAJ - 2024"),
 }
 
+TOP_BOTTOM_EXCLUDED_INDICATORS = {
+    "Število prebivalcev (H2/2024)",
+    "Povprečna starost prebivalcev 2024",
+    'Naravni prirast /1000 prebival.',
+    'Selitveni prirast /1000 prebival.',
+    "Pritisk turizma na družbeni prostor (število stalnih ležišč / 100 prebivalcev)",
+    "Delovno aktivno prebivalstvo v turizmu (OECD/WTO)",
+    "Vsi delovni aktivni na območju",
+    "Delež delovno aktivnih od vseh prebivalcev območja",
+    "Število prebivalcev starih 15 let ali več na območju",
+    "Število prebivalcev starih 15 let ali več s srednješolsko strokovno ali splošno izobrazbo",
+    "Število prebivalcev starih 15 let ali več z izobrazbo višjo od srednješolske",
+    "Vsi delovno aktivni na območju 2025",
+    "Delež delovno aktivnih v turizmu (OECD/WTO)",
+    "Povprečna mesečna neto  plača/zaposl. osebo (EUR)",
+    "Povprečna neto plača izplačana na zaposl. osebo v Gostinstvu (I)",
+    "Indeks neto plača v Gostinstvu (I) /pvp. plača v vseh dejavnostih",
+    "Poraba el.energije (MWh) Dejavnost Gostinstvo (I)",
+    "Prenočitve turistov SKUPAJ - 2019",
+    "Prenočitve turistov Domači - 2019",
+    "Prenočitve turistov Tuji - 2019",
+    "Delež tujih prenočitev - 2019",
+    "Prenočitve turistov SKUPAJ - 2024",
+    "Prenočitve turistov Domači - 2024",
+    "Prenočitve turistov Tuji - 2024",
+    "GINI Indeks - sezonskost prenočitev - 2024",
+    "Rast števila prenočitev 2024/2019 - SKUPAJ",
+    "Rast števila prenočitev 2024/2019 - Domači",
+    "Rast števila prenočitev 2024/2019 - Tuji",
+    "Delež tujih prenočitev - 2024",
+    "Delež vseh prenočitev - Domači trg - 2024",
+    "Delež vseh prenočitev - DACH trgi (nemško govoreči trgi: D, A in CH) - 2024",
+    "Delež vseh prenočitev - Italijanski trg - 2024",
+    "Delež vseh prenočitev - Vzh.evropski trgi (PL,CZ,HU,SK,LIT,LTV,EST,RU,UKR) - 2024",
+    "Delež vseh prenočitev - Drugi zah.in sev. evropski trgi (ES,P, F,Benelux, Skandinavske države) - 2024",
+    "Delež vseh prenočitev - Prekomorski trgi (ZDA, VB, CAN, AU, Azija) - 2024",
+    "Delež vseh prenočitev - Trgi JV Evrope - 2024",
+    "Delež vseh prenočitev - Vsi drugi tuji trgi - 2024",
+    "Prihodi turistov SKUPAJ - 2024",
+    "Prihodi turistov Domači - 2024",
+    "Prihodi turistov Tuji - 2024",
+    "PDB turistov SKUPAJ - 2024",
+    "PDB turistov Domači - 2024",
+    "PDB turistov Tuji - 2024",
+    "Gibanje GINI Indeksa prenoč. 2024/2019",
+    "Nastanitvene kapacitete - Nedeljive enote",
+    "Nastanitvene kapacitete - vsa ležišča",
+    "Nastanitvene kapacitete - stalna ležišča",
+    "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati",
+    "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi",
+    "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet",
+    "Struktura nastanitvenih kapacitet - Stalna ležišča - Hoteli in podobni obrati",
+    "Struktura nastanitvenih kapacitet - Stalna ležišča - Kampi",
+    "Struktura nastanitvenih kapacitet - Stalna ležišča - Druge vrste kapacitet",
+    "Delež stalnih ležišč v Hotelih ipd.",
+    "Število sob (ned.enot) v kapacitetah višje kakovosti - ( 4* in 5*) 2025",
+    "Število sob v hotelih ipd. NO 2025",
+    "Število stalnih ležišč v hotelih ipd. NO 2025",
+    "Delež stalnih ležišč v hotelih ipd. NO",
+    "Število enot v kampih 2025",
+    "Število ležišč v kampih 2025",
+    "Število sob v turističnih kmetijah z nastanitvijo 2025",
+    "Število ležišč v turističnih kmetijah z nastanitvijo 2025",
+    "Število sob v vseh drugih vrstah NO 2025",
+    "Število ležišč v vseh drugih vrstah NO 2025",
+    "Povprečna letna zasedenost staln. Ležišč 2024",
+    "Ocenjena povp. Letna zased. sob (nedeljivih enot) 2024",
+    "Ocenjeni stroški dela v reg. podj. v Gostinski (I) dejavnosti",
+    "Ocenjeni stroški dela v reg. podj. v nastan.gost. (I 55) dejavnosti",
+}
+
 INDIKATORJI_Z_INDEKSI = {
     'PDB turistov SKUPAJ - 2024',
     'PDB turistov Domači - 2024',
@@ -364,7 +443,6 @@ LOWER_IS_BETTER_INDICATORS = {
     "Intenzivnost turizma (število nočitev na dan / 100 prebivalcev) 2025",
     "GINI Indeks - sezonskost prenočitev - 2024",
     "Poraba el.energ. v kWh na realiz. 1000 EUR prihodka v Gostinstvu (I)",
-    "Komunalni odpadki, zbrani  z javnim odvozom (kg/prebivalca)",
     "Delež stroškov dela v prihodkih v reg. podj. v Gostinstvu (I)",
     "Delež stroškov dela v dod vredn. v reg. podj. v Gostinstvu (I)",
     "Delež stroškov dela v prihodkih v reg. podj. v nast.gost.dej. (I 55)",
@@ -505,6 +583,163 @@ def parse_numeric(series: pd.Series) -> pd.Series:
 
     return s.apply(conv)
 
+def get_agg_rule(indicator: str, agg_rules: dict) -> tuple[str, str | None]:
+    return agg_rules.get(indicator, ("sum", None))
+
+def get_default_population_base(indicator: str) -> str:
+    if "2025" in indicator:
+        return "Število prebivalcev (H2/2025)"
+    return "Število prebivalcev (H2/2024)"
+
+def get_sum_comparison_base(indicator: str) -> tuple[str, str]:
+    lower = indicator.lower()
+    pop_base = get_default_population_base(indicator)
+
+    if indicator in {"Število prebivalcev (H2/2024)", "Število prebivalcev (H2/2025)"}:
+        return "Površina območja (km2)", "delež površine"
+    if indicator == "Površina območja (km2)":
+        return pop_base, "delež prebivalstva"
+    if "starih 15 let ali več s srednješolsko" in lower or "starih 15 let ali več z izobrazbo višjo" in lower:
+        return "Število prebivalcev starih 15 let ali več na območju", "delež prebivalcev 15+"
+    if "starih 15 let ali več na območju" in lower:
+        return pop_base, "delež prebivalstva"
+    if "delovno aktivno prebivalstvo v turizmu" in lower:
+        if "2025" in indicator:
+            return "Vsi delovno aktivni na območju 2025", "delež vseh delovno aktivnih"
+        return "Vsi delovni aktivni na območju", "delež vseh delovno aktivnih"
+    if "zaposl" in lower and "gostinstvu" in lower:
+        return "Vsi delovni aktivni na območju", "delež vseh delovno aktivnih"
+    if "zaposleni v nastan.dejav" in lower:
+        return "Vsi delovni aktivni na območju", "delež vseh delovno aktivnih"
+    if "število reg. podjetij" in lower and ("gostinstvu" in lower or "nastanitveni dejav" in lower):
+        return "Število vseh vrst podjetij na območju", "delež vseh podjetij"
+    if any(k in lower for k in ["prihodki", "dodana vrednost", "stroški dela", "ebitda", "dobiček", "izguba", "sredstva", "kapital"]):
+        if "gostinstvu" in lower:
+            return "Zaposleni v Gostinstvu (I) v registr.podjetjih in s.p.", "delež zaposlenih v gostinstvu"
+        if "nastanitveni dejav" in lower:
+            return "Zaposleni v nastan.dejav. (I55) v registr.podjetjih in s.p.", "delež zaposlenih v nastanitvi"
+    if "poraba el.energije" in lower and "gostinstvo" in lower:
+        return "Prihodki reg.podjetij in s.p. v Gostinstvu (I)", "delež prihodkov v gostinstvu"
+    if any(k in lower for k in ["prenočitve", "prihodi turistov", "nastanitvene kapacitete", "nastanitvenih obratov", "hotelov", "kampov", "turističnih kmetij", "ležišč", "sob ", "nedeljive enote"]):
+        return pop_base, "delež prebivalstva"
+    if any(k in lower for k in ["stanovanj", "gradbenih dovoljenj", "dijakov", "študentov", "odpadki", "dohodek", "plača"]):
+        return pop_base, "delež prebivalstva"
+    if any(k in lower for k in ["kmetijskih", "kmetij."]):
+        return "Površina območja (km2)", "delež površine"
+    return pop_base, "delež prebivalstva"
+
+def compute_indicator_comparison(
+    reg_df: pd.DataFrame,
+    indicator: str,
+    agg_rules: dict,
+    region_name: str,
+    df_slo_total_num: pd.Series,
+):
+    v_reg = aggregate_indicator_with_rules(reg_df, indicator, agg_rules, region_name)
+    v_slo = df_slo_total_num.get(indicator, np.nan)
+
+    if pd.isna(v_reg) or pd.isna(v_slo) or float(v_slo) == 0:
+        return None
+
+    rule, _ = get_agg_rule(indicator, agg_rules)
+    direction = -1.0 if is_lower_better(indicator) else 1.0
+    delta_raw = ((float(v_reg) - float(v_slo)) / abs(float(v_slo))) * 100.0
+    delta_unit = "%"
+    comparison_method = "Neposredno glede na slovensko osnovo"
+
+    if rule == "sum":
+        base_indicator, base_label = get_sum_comparison_base(indicator)
+        if base_indicator in reg_df.columns:
+            base_reg = aggregate_indicator_with_rules(reg_df, base_indicator, agg_rules, region_name)
+            base_slo = df_slo_total_num.get(base_indicator, np.nan)
+            if not pd.isna(base_reg) and not pd.isna(base_slo) and float(base_slo) != 0:
+                indicator_share = float(v_reg) / float(v_slo)
+                benchmark_share = float(base_reg) / float(base_slo)
+                delta_raw = (indicator_share - benchmark_share) * 100.0
+                delta_unit = "o.t."
+                comparison_method = f"Delež kazalnika glede na {base_label}"
+
+    delta_aligned = direction * delta_raw
+    return {
+        "Kazalnik": indicator,
+        "Smer kazalnika": "Nižje je bolje" if direction < 0 else "Višje je bolje",
+        "Vrednost območja": format_indicator_value_map(indicator, v_reg),
+        "Osnova (Slovenija)": format_indicator_value_map(indicator, v_slo),
+        "Metoda primerjave": comparison_method,
+        "Odstopanje_raw": delta_raw,
+        "Odstopanje_aligned_raw": delta_aligned,
+        "Enota odstopanja": delta_unit,
+    }
+
+def build_top_bottom_group_sections(
+    reg_df: pd.DataFrame,
+    df_slo_total_num: pd.Series,
+    grouped_filtered: dict[str, list[str]],
+    agg_rules: dict,
+    region_name: str,
+) -> list[dict]:
+    sections = []
+    for group_name in TOP_BOTTOM_GROUP_ORDER:
+        group_indicators = [
+            ind for ind in grouped_filtered.get(group_name, [])
+            if ind not in TOP_BOTTOM_EXCLUDED_INDICATORS
+        ]
+        comparison_rows = []
+        for ind in group_indicators:
+            row = compute_indicator_comparison(
+                reg_df=reg_df,
+                indicator=ind,
+                agg_rules=agg_rules,
+                region_name=region_name,
+                df_slo_total_num=df_slo_total_num,
+            )
+            if row is not None:
+                row["Skupina kazalnikov"] = group_name
+                comparison_rows.append(row)
+
+        if not comparison_rows:
+            continue
+
+        group_df = pd.DataFrame(comparison_rows)
+        limit = min(TOP_BOTTOM_GROUP_LIMITS.get(group_name, 5), len(group_df))
+        best_df = group_df.nlargest(limit, "Odstopanje_aligned_raw").copy()
+
+        remaining_df = group_df.drop(best_df.index)
+        if len(remaining_df) >= limit:
+            worst_df = remaining_df.nsmallest(limit, "Odstopanje_aligned_raw").copy()
+        else:
+            worst_df = group_df.nsmallest(limit, "Odstopanje_aligned_raw").copy()
+
+        for tbl in (best_df, worst_df):
+            tbl["Odstopanje glede na smer"] = tbl.apply(
+                lambda row: format_comparison_delta(row["Odstopanje_aligned_raw"], row["Enota odstopanja"]),
+                axis=1,
+            )
+            tbl["Primerjalni odmik"] = tbl.apply(
+                lambda row: format_comparison_delta(row["Odstopanje_raw"], row["Enota odstopanja"]),
+                axis=1,
+            )
+
+        ai_cols = [
+            "Kazalnik",
+            "Smer kazalnika",
+            "Vrednost območja",
+            "Osnova (Slovenija)",
+            "Metoda primerjave",
+            "Odstopanje glede na smer",
+            "Primerjalni odmik",
+        ]
+        sections.append({
+            "group": group_name,
+            "limit": limit,
+            "best_df": best_df,
+            "worst_df": worst_df,
+            "top_rows": best_df[ai_cols].to_dict("records"),
+            "bottom_rows": worst_df[ai_cols].to_dict("records"),
+        })
+
+    return sections
+
 def format_si_number(x, decimals=None):
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return "—"
@@ -528,6 +763,12 @@ def format_pct(x, decimals=1):
         return format_si_number(float(x), decimals) + " %"
     except Exception:
         return "—"
+
+def format_comparison_delta(x, unit: str) -> str:
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return "—"
+    suffix = " %" if unit == "%" else " o.t."
+    return f"{'+' if float(x) >= 0 else ''}{format_si_number(float(x), 1)}{suffix}"
     
 def format_indicator_value_tables(indicator: str, x):
     # deleži/indeksi so v podatkih v obliki 0.45 -> prikaz 45 %
@@ -625,24 +866,45 @@ def rows_to_prompt_lines(rows: list[dict]) -> str:
         direction = row.get("Smer kazalnika", "—")
         region_val = row.get("Vrednost območja", "—")
         baseline_val = row.get("Osnova (Slovenija)", "—")
-        aligned_delta = row.get("Odstopanje glede na smer (%)", row.get("Odstopanje od osnove (%)", "—"))
-        raw_delta = row.get("Relativno odstopanje (%)", row.get("Odstopanje od osnove (%)", "—"))
+        comparison_method = row.get("Metoda primerjave", "—")
+        aligned_delta = row.get("Odstopanje glede na smer", row.get("Odstopanje od osnove", "—"))
+        raw_delta = row.get("Primerjalni odmik", row.get("Odstopanje od osnove", "—"))
         lines.append(
             f"- {indicator} | smer: {direction} | območje: {region_val} | Slovenija: {baseline_val} | "
-            f"odstopanje glede na smer: {aligned_delta} | relativno: {raw_delta}"
+            f"primerjava: {comparison_method} | odstopanje glede na smer: {aligned_delta} | primerjalni odmik: {raw_delta}"
         )
     return "\n".join(lines)
 
-def fallback_region_commentary(region_name: str, top_rows: list[dict], bottom_rows: list[dict]) -> str:
-    top_names = ", ".join([r.get("Kazalnik", "—") for r in top_rows[:3]]) if top_rows else "ni podatkov"
-    bottom_names = ", ".join([r.get("Kazalnik", "—") for r in bottom_rows[:3]]) if bottom_rows else "ni podatkov"
+def grouped_rows_to_prompt_text(group_sections: list[dict]) -> str:
+    if not group_sections:
+        return "Ni podatkov po skupinah."
+    blocks = []
+    for section in group_sections:
+        group_name = section.get("group", "Neznana skupina")
+        top_rows = section.get("top_rows", [])
+        bottom_rows = section.get("bottom_rows", [])
+        blocks.append(
+            f"{group_name}\n"
+            f"TOP:\n{rows_to_prompt_lines(top_rows)}\n"
+            f"BOTTOM:\n{rows_to_prompt_lines(bottom_rows)}"
+        )
+    return "\n\n".join(blocks)
+
+def fallback_region_commentary(region_name: str, group_sections: list[dict]) -> str:
+    summary_parts = []
+    for section in group_sections:
+        group_name = section.get("group", "Neznana skupina")
+        top_names = ", ".join([r.get("Kazalnik", "—") for r in section.get("top_rows", [])[:2]]) or "ni podatkov"
+        bottom_names = ", ".join([r.get("Kazalnik", "—") for r in section.get("bottom_rows", [])[:2]]) or "ni podatkov"
+        summary_parts.append(f"{group_name}: prednosti {top_names}; tveganja {bottom_names}")
+
+    summary_txt = " | ".join(summary_parts) if summary_parts else "Ni dovolj podatkov za skupinsko primerjavo."
     return (
-        f"**Povzetek za območje {region_name}:** najmočnejši kazalniki so {top_names}, največja odstopanja v negativno smer "
-        f"pa so pri {bottom_names}. Primerjava je glede na slovensko osnovo.\n\n"
+        f"**Povzetek za območje {region_name}:** {summary_txt}. Primerjava je glede na slovensko osnovo.\n\n"
         f"**Priporočila:**\n"
-        f"1. Ohranite in razširite ukrepe, povezane z najboljšimi kazalniki.\n"
-        f"2. Za najslabše kazalnike določite 2-3 ciljne ukrepe z nosilci in roki.\n"
-        f"3. Spremljajte spremembe mesečno in preverjajte napredek glede na slovensko osnovo."
+        f"1. Ukrepe določite ločeno po skupinah kazalnikov, ne samo na ravni celotnega območja.\n"
+        f"2. Pri najslabših kazalnikih v vsaki skupini določite 2-3 ciljne ukrepe z nosilci in roki.\n"
+        f"3. Spremljajte napredek po skupinah in preverjajte, ali se slabši kazalniki približujejo slovenski osnovi."
     )
 
 def extract_response_text(resp_json: dict) -> str | None:
@@ -656,10 +918,63 @@ def extract_response_text(resp_json: dict) -> str | None:
                 return txt.strip()
     return None
 
-def generate_region_ai_commentary(region_name: str, top_rows: list[dict], bottom_rows: list[dict]) -> tuple[str, str, str | None]:
+def extract_openai_error_fields(resp) -> tuple[str | None, str | None, str | None]:
+    try:
+        data = resp.json()
+    except Exception:
+        return None, None, None
+    err = data.get("error", {}) if isinstance(data, dict) else {}
+    if not isinstance(err, dict):
+        return None, None, None
+    message = err.get("message")
+    err_type = err.get("type")
+    code = err.get("code")
+    if message is not None:
+        message = str(message).strip()
+    if err_type is not None:
+        err_type = str(err_type).strip()
+    if code is not None:
+        code = str(code).strip()
+    return message or None, err_type or None, code or None
+
+def format_openai_http_error(resp) -> str:
+    status = resp.status_code
+    message, err_type, code = extract_openai_error_fields(resp)
+    parts = [f"AI klic ni uspel (HTTP {status})"]
+    if code:
+        parts.append(f"koda: {code}")
+    if err_type:
+        parts.append(f"tip: {err_type}")
+    if message:
+        parts.append(f"podrobnosti: {message}")
+    return ". ".join(parts) + "."
+
+def should_retry_openai_call(status_code: int, err_type: str | None, err_code: str | None) -> bool:
+    if status_code in {500, 502, 503, 504}:
+        return True
+    if status_code == 429:
+        # Do not retry if account quota is exhausted.
+        if err_code == "insufficient_quota" or err_type == "insufficient_quota":
+            return False
+        return True
+    return False
+
+def compute_retry_delay_seconds(resp, attempt_index: int) -> float:
+    retry_after = resp.headers.get("Retry-After")
+    if retry_after:
+        try:
+            sec = float(retry_after)
+            if sec > 0:
+                return min(sec, 20.0)
+        except Exception:
+            pass
+    # Exponential backoff: 1.5s, 3s, 6s
+    return min(1.5 * (2 ** attempt_index), 20.0)
+
+def generate_region_ai_commentary(region_name: str, group_sections: list[dict]) -> tuple[str, str, str | None]:
     api_key = get_secret_value("OPENAI_API_KEY")
     if not api_key or requests is None:
-        return fallback_region_commentary(region_name, top_rows, bottom_rows), "fallback", None
+        return fallback_region_commentary(region_name, group_sections), "fallback", None
 
     model = get_secret_value("OPENAI_MODEL", "gpt-4o-mini")
     system_prompt = (
@@ -668,13 +983,13 @@ def generate_region_ai_commentary(region_name: str, top_rows: list[dict], bottom
     )
     user_prompt = (
         f"Območje: {region_name}\n\n"
-        f"TOP kazalniki (boljše od osnove):\n{rows_to_prompt_lines(top_rows)}\n\n"
-        f"BOTTOM kazalniki (slabše od osnove):\n{rows_to_prompt_lines(bottom_rows)}\n\n"
+        f"Top/Bottom po skupinah kazalnikov:\n{grouped_rows_to_prompt_text(group_sections)}\n\n"
         "Naloga:\n"
-        "1) Napiši kratek komentar (4-6 stavkov), kaj so ključne prednosti in tveganja.\n"
-        "2) Dodaj 4 konkretna priporočila za izboljšanje slabših kazalnikov.\n"
-        "3) Piši v slovenščini, jedrnato, brez izmišljenih podatkov.\n"
-        "4) Maksimalno 220 besed."
+        "1) Napiši kratek celosten komentar (5-7 stavkov), ki povzema stanje po vseh štirih skupinah kazalnikov.\n"
+        "2) Jasno loči, katere so glavne prednosti in katera tveganja izstopajo po posameznih skupinah.\n"
+        "3) Dodaj 4 konkretna priporočila za izboljšanje, pri čemer naj priporočila pokrijejo več skupin kazalnikov.\n"
+        "4) Uporabi samo podane podatke, brez izmišljenih razlag ali številk.\n"
+        "5) Piši v slovenščini, jedrnato, maksimalno 260 besed."
     )
 
     payload = {
@@ -694,26 +1009,40 @@ def generate_region_ai_commentary(region_name: str, top_rows: list[dict], bottom
     }
 
     try:
-        resp = requests.post(
-            "https://api.openai.com/v1/responses",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            data=json.dumps(payload),
-            timeout=35,
-        )
-        if resp.status_code >= 400:
-            err = f"AI klic ni uspel (HTTP {resp.status_code})."
-            return fallback_region_commentary(region_name, top_rows, bottom_rows), "fallback", err
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            resp = requests.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps(payload),
+                timeout=35,
+            )
 
-        text = extract_response_text(resp.json())
-        if not text:
-            err = "AI odgovor je bil prazen."
-            return fallback_region_commentary(region_name, top_rows, bottom_rows), "fallback", err
-        return text, "ai", None
+            if resp.status_code < 400:
+                text = extract_response_text(resp.json())
+                if not text:
+                    err = "AI odgovor je bil prazen."
+                    return fallback_region_commentary(region_name, group_sections), "fallback", err
+                return text, "ai", None
+
+            message, err_type, err_code = extract_openai_error_fields(resp)
+            if attempt < max_attempts - 1 and should_retry_openai_call(resp.status_code, err_type, err_code):
+                time.sleep(compute_retry_delay_seconds(resp, attempt))
+                continue
+
+            if resp.status_code == 429 and (err_code == "insufficient_quota" or err_type == "insufficient_quota"):
+                err = (
+                    "AI klic ni uspel (HTTP 429). Kvota za OPENAI_API_KEY je porabljena "
+                    "(insufficient_quota). Preveri billing/kvote na platform.openai.com."
+                )
+            else:
+                err = format_openai_http_error(resp)
+            return fallback_region_commentary(region_name, group_sections), "fallback", err
     except Exception as e:
-        return fallback_region_commentary(region_name, top_rows, bottom_rows), "fallback", str(e)
+        return fallback_region_commentary(region_name, group_sections), "fallback", str(e)
 
 
 
@@ -1636,66 +1965,64 @@ def render_view(view_title: str, group_col: str):
                     else:
                         st.metric(ind, format_indicator_value_map(ind, v_reg))
 
-        comparison_rows = []
-        for ind in indicator_cols:
-            v_reg = aggregate_indicator_with_rules(reg_df, ind, AGG_RULES, selected_region)
-            v_slo = df_slo_total_num.get(ind, np.nan)
+        group_sections = build_top_bottom_group_sections(
+            reg_df=reg_df,
+            df_slo_total_num=df_slo_total_num,
+            grouped_filtered=grouped_filtered,
+            agg_rules=AGG_RULES,
+            region_name=selected_region,
+        )
 
-            if pd.isna(v_reg) or pd.isna(v_slo):
-                continue
+        if group_sections:
+            st.markdown("**Top/Bottom po skupinah kazalnikov**")
+            st.caption("Vsaka skupina kazalnikov ima ločeno razvrstitev. Za povprečja in indekse je uporabljen neposreden odmik glede na Slovenijo (%). Za kumulativne kazalnike je uporabljen odmik deleža kazalnika glede na referenčni delež regije (o.t.), da velikost območja ne izkrivlja rezultatov.")
 
-            baseline = v_slo
-            if pd.isna(baseline) or baseline == 0:
-                continue
+            tab_labels = [
+                f"{GROUP_COLOR_EMOJI.get(section['group'], '•')} {section['group']} ({section['limit']}/{section['limit']})"
+                for section in group_sections
+            ]
+            group_tabs = st.tabs(tab_labels)
+            table_cols = [
+                "Kazalnik",
+                "Smer kazalnika",
+                "Vrednost območja",
+                "Osnova (Slovenija)",
+                "Metoda primerjave",
+                "Odstopanje glede na smer",
+                "Primerjalni odmik",
+            ]
 
-            # Use abs(baseline) to avoid sign inversion when baseline is negative.
-            delta_pct_raw = ((float(v_reg) - float(baseline)) / abs(float(baseline))) * 100.0
-            direction = -1.0 if is_lower_better(ind) else 1.0
-            delta_pct_aligned = direction * delta_pct_raw
-            comparison_rows.append({
-                "Kazalnik": ind,
-                "Smer kazalnika": "Nižje je bolje" if direction < 0 else "Višje je bolje",
-                "Vrednost območja": format_indicator_value_map(ind, v_reg),
-                "Osnova (Slovenija)": format_indicator_value_map(ind, baseline),
-                "Odstopanje_raw": delta_pct_raw,
-                "Odstopanje_aligned_raw": delta_pct_aligned,
-            })
-
-        if comparison_rows:
-            comparison_df = pd.DataFrame(comparison_rows)
-            best_df = comparison_df.nlargest(5, "Odstopanje_aligned_raw").copy()
-            worst_df = comparison_df.nsmallest(5, "Odstopanje_aligned_raw").copy()
-            for tbl in (best_df, worst_df):
-                tbl["Odstopanje glede na smer (%)"] = tbl["Odstopanje_aligned_raw"].apply(
-                    lambda x: f"{'+' if x >= 0 else ''}{format_si_number(x, 1)} %"
-                )
-                tbl["Relativno odstopanje (%)"] = tbl["Odstopanje_raw"].apply(
-                    lambda x: f"{'+' if x >= 0 else ''}{format_si_number(x, 1)} %"
-                )
-
-            st.markdown("**Največja odstopanja od nacionalne osnove**")
-            st.caption("Relativno odstopanje = (območje - osnova) / abs(osnova). Top/Bottom razvrstitev upošteva smer kazalnika (višje ali nižje je bolje).")
-            best_col, worst_col = st.columns(2)
-            with best_col:
-                st.markdown("**Top 5 (boljše od osnove)**")
-                st.dataframe(
-                    best_df[["Kazalnik", "Smer kazalnika", "Vrednost območja", "Osnova (Slovenija)", "Odstopanje glede na smer (%)", "Relativno odstopanje (%)"]],
-                    use_container_width = True,
-                    hide_index=True,
-                )
-            with worst_col:
-                st.markdown("**Bottom 5 (slabše od osnove)**")
-                st.dataframe(
-                    worst_df[["Kazalnik", "Smer kazalnika", "Vrednost območja", "Osnova (Slovenija)", "Odstopanje glede na smer (%)", "Relativno odstopanje (%)"]],
-                    use_container_width = True,
-                    hide_index=True,
-                )
+            for tab, section in zip(group_tabs, group_sections):
+                with tab:
+                    best_col, worst_col = st.columns(2)
+                    with best_col:
+                        st.markdown(f"**Top {section['limit']} (boljše od osnove)**")
+                        st.dataframe(
+                            section["best_df"][table_cols],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    with worst_col:
+                        st.markdown(f"**Bottom {section['limit']} (slabše od osnove)**")
+                        st.dataframe(
+                            section["worst_df"][table_cols],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
             st.markdown("**AI komentar in priporočila za območje**")
-            top_rows_ai = best_df[["Kazalnik", "Smer kazalnika", "Vrednost območja", "Osnova (Slovenija)", "Odstopanje glede na smer (%)", "Relativno odstopanje (%)"]].to_dict("records")
-            bottom_rows_ai = worst_df[["Kazalnik", "Smer kazalnika", "Vrednost območja", "Osnova (Slovenija)", "Odstopanje glede na smer (%)", "Relativno odstopanje (%)"]].to_dict("records")
             ai_sig_raw = json.dumps(
-                {"region": selected_region, "top": top_rows_ai, "bottom": bottom_rows_ai},
+                {
+                    "region": selected_region,
+                    "groups": [
+                        {
+                            "group": section["group"],
+                            "top": section["top_rows"],
+                            "bottom": section["bottom_rows"],
+                        }
+                        for section in group_sections
+                    ],
+                },
                 ensure_ascii=False,
             )
             ai_sig = hashlib.md5(ai_sig_raw.encode("utf-8")).hexdigest()[:12]
@@ -1706,8 +2033,7 @@ def render_view(view_title: str, group_col: str):
                 with st.spinner("Generiram komentar in priporočila..."):
                     ai_text, ai_source, ai_error = generate_region_ai_commentary(
                         selected_region,
-                        top_rows_ai,
-                        bottom_rows_ai,
+                        group_sections,
                     )
                 st.session_state[ai_state_key] = {
                     "text": ai_text,
@@ -1717,11 +2043,19 @@ def render_view(view_title: str, group_col: str):
 
             ai_payload = st.session_state.get(ai_state_key, {})
             if ai_payload.get("source") == "fallback":
-                st.caption("OPENAI_API_KEY ni nastavljen ali AI klic ni uspel. Prikazan je samodejni komentar na osnovi kazalnikov.")
+                err_txt = str(ai_payload.get("error") or "")
+                if "insufficient_quota" in err_txt:
+                    st.caption("OPENAI_API_KEY nima več razpoložljive kvote. Prikazan je samodejni komentar na osnovi kazalnikov.")
+                elif "HTTP 429" in err_txt:
+                    st.caption("AI klic je omejen zaradi preveč zahtevkov (rate limit). Prikazan je samodejni komentar na osnovi kazalnikov.")
+                else:
+                    st.caption("OPENAI_API_KEY ni nastavljen ali AI klic ni uspel. Prikazan je samodejni komentar na osnovi kazalnikov.")
             if ai_payload.get("error"):
                 st.caption(f"Podrobnosti: {ai_payload['error']}")
             if ai_payload.get("text"):
                 st.markdown(ai_payload["text"])
+        else:
+            st.info("Za Top/Bottom analizo po skupinah ni na voljo dovolj kazalnikov.")
 
 
     st.markdown("---")
