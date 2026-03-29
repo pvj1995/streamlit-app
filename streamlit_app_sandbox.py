@@ -31,30 +31,30 @@ except Exception:
     requests = None
 
 
-def require_password():
-    if "APP_PASSWORD" not in st.secrets:
-        st.error("Manjka APP_PASSWORD v Streamlit Secrets.")
-        st.stop()
+# def require_password():
+#     if "APP_PASSWORD" not in st.secrets:
+#         st.error("Manjka APP_PASSWORD v Streamlit Secrets.")
+#         st.stop()
 
-    if st.session_state.get("authenticated", False):
-        return
+#     if st.session_state.get("authenticated", False):
+#         return
 
-    st.title("Prijava")
+#     st.title("Prijava")
 
-    with st.form("login_form", clear_on_submit=False):
-        pwd = st.text_input("Geslo", type="password")
-        submitted = st.form_submit_button("Vstopi")
+#     with st.form("login_form", clear_on_submit=False):
+#         pwd = st.text_input("Geslo", type="password")
+#         submitted = st.form_submit_button("Vstopi")
 
-        if submitted:
-            if hmac.compare_digest(pwd, st.secrets["APP_PASSWORD"]):
-                st.session_state["authenticated"] = True
-                st.rerun()
-            else:
-                st.error("Napačno geslo.")
+#         if submitted:
+#             if hmac.compare_digest(pwd, st.secrets["APP_PASSWORD"]):
+#                 st.session_state["authenticated"] = True
+#                 st.rerun()
+#             else:
+#                 st.error("Napačno geslo.")
 
-    st.stop()
+#     st.stop()
 
-require_password()
+# require_password()
 
 
 DATA_XLSX_DEFAULT = "Skupna tabela občine.xlsx"
@@ -442,11 +442,15 @@ LOWER_IS_BETTER_INDICATORS = {
     "Intenzivnost turizma (število nočitev na dan / 100 prebivalcev)",
     "Intenzivnost turizma (število nočitev na dan / 100 prebivalcev) 2025",
     "GINI Indeks - sezonskost prenočitev - 2024",
+    "GINI Indeks - sezonskost prenočitev - 2025",
+    "Gibanje GINI Indeksa prenoč. 2025/2019",
     "Poraba el.energ. v kWh na realiz. 1000 EUR prihodka v Gostinstvu (I)",
+    "Poraba el.energije (MWh) Dejavnost Gostinstvo (I) 2025",
     "Delež stroškov dela v prihodkih v reg. podj. v Gostinstvu (I)",
     "Delež stroškov dela v dod vredn. v reg. podj. v Gostinstvu (I)",
     "Delež stroškov dela v prihodkih v reg. podj. v nast.gost.dej. (I 55)",
     "Delež stroškov dela v dod vredn. v reg. podj. v nast.gost.dej. (I 55)",
+    "Število počitniških stanovanj",
 }
 
 SKUPNO_OPOZORILO_AGREGACIJA = {
@@ -976,7 +980,7 @@ def generate_region_ai_commentary(region_name: str, group_sections: list[dict]) 
     if not api_key or requests is None:
         return fallback_region_commentary(region_name, group_sections), "fallback", None
 
-    model = get_secret_value("OPENAI_MODEL", "gpt-4o-mini")
+    model = get_secret_value("OPENAI_MODEL", "gpt-5.4")
     system_prompt = (
         "Si analitik regionalnega razvoja turizma. Uporabi samo podane kazalnike in podaj kratko, "
         "praktično razlago ter priporočila."
