@@ -30,6 +30,11 @@ try:
 except Exception:
     requests = None
 
+try:
+    from sqlalchemy import text as sql_text
+except Exception:
+    sql_text = None
+
 
 # def require_password():
 #     if "APP_PASSWORD" not in st.secrets:
@@ -74,6 +79,8 @@ TOP_BOTTOM_GROUP_LIMITS = {
 }
 TOP_BOTTOM_GROUP_ORDER = list(TOP_BOTTOM_GROUP_LIMITS.keys())
 SLO_BOUNDS = [[41.00, 10.38], [49.88, 18.61]]
+AI_CACHE_CONNECTION_NAME_DEFAULT = "ai_cache_db"
+AI_CACHE_TABLE_NAME = "ai_commentary_cache"
 
 AGG_RULES = {
     'Površina območja (km2)': ("sum", None),
@@ -861,6 +868,107 @@ def get_secret_value(name: str, default=None):
     except Exception:
         return default
 
+def _sql(stmt: str):
+    return sql_text(stmt) if sql_text is not None else stmt
+
+def get_ai_cache_connection():
+    conn_name = get_secret_value("AI_CACHE_CONNECTION_NAME", AI_CACHE_CONNECTION_NAME_DEFAULT)
+    try:
+        return st.connection(conn_name, type="sql"), conn_name
+    except Exception:
+        return None, conn_name
+
+def ensure_ai_cache_table(conn) -> bool:
+    try:
+        with conn.session as s:
+            s.execute(_sql(f"""
+                CREATE TABLE IF NOT EXISTS {AI_CACHE_TABLE_NAME} (
+                    cache_key TEXT PRIMARY KEY,
+                    payload_hash TEXT NOT NULL,
+                    region TEXT NOT NULL,
+                    group_name TEXT NOT NULL,
+                    response_text TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            s.commit()
+        return True
+    except Exception:
+        return False
+
+def get_cached_ai_commentary(cache_key: str) -> dict | None:
+    conn, _ = get_ai_cache_connection()
+    if conn is None or not ensure_ai_cache_table(conn):
+        return None
+    try:
+        df_cached = conn.query(
+            f"""
+            SELECT region, group_name, response_text, model, updated_at
+            FROM {AI_CACHE_TABLE_NAME}
+            WHERE cache_key = :cache_key
+            LIMIT 1
+            """,
+            params={"cache_key": cache_key},
+            ttl=0,
+        )
+    except Exception:
+        return None
+
+    if df_cached is None or df_cached.empty:
+        return None
+    row = df_cached.iloc[0]
+    return {
+        "region": row.get("region"),
+        "group_name": row.get("group_name"),
+        "text": row.get("response_text", ""),
+        "source": "db_cache",
+        "model": row.get("model"),
+        "updated_at": row.get("updated_at"),
+    }
+
+def store_cached_ai_commentary(
+    cache_key: str,
+    *,
+    payload_hash: str,
+    region_name: str,
+    group_name: str,
+    text: str,
+    model: str,
+) -> None:
+    conn, _ = get_ai_cache_connection()
+    if conn is None or not ensure_ai_cache_table(conn):
+        return
+    try:
+        with conn.session as s:
+            s.execute(
+                _sql(f"""
+                    INSERT INTO {AI_CACHE_TABLE_NAME}
+                        (cache_key, payload_hash, region, group_name, response_text, model, updated_at)
+                    VALUES
+                        (:cache_key, :payload_hash, :region, :group_name, :response_text, :model, NOW())
+                    ON CONFLICT (cache_key)
+                    DO UPDATE SET
+                        payload_hash = EXCLUDED.payload_hash,
+                        region = EXCLUDED.region,
+                        group_name = EXCLUDED.group_name,
+                        response_text = EXCLUDED.response_text,
+                        model = EXCLUDED.model,
+                        updated_at = NOW()
+                """),
+                {
+                    "cache_key": cache_key,
+                    "payload_hash": payload_hash,
+                    "region": region_name,
+                    "group_name": group_name,
+                    "response_text": text,
+                    "model": model,
+                },
+            )
+            s.commit()
+    except Exception:
+        return
+
 def rows_to_prompt_lines(rows: list[dict]) -> str:
     if not rows:
         return "- Ni podatkov."
@@ -993,13 +1101,13 @@ def generate_region_ai_commentary(region_name: str, group_sections: list[dict]) 
         "2) Jasno loči, katere so glavne prednosti in katera tveganja izstopajo po posameznih skupinah.\n"
         "3) Dodaj 4 konkretna priporočila za izboljšanje, pri čemer naj priporočila pokrijejo več skupin kazalnikov.\n"
         "4) Uporabi samo podane podatke, brez izmišljenih razlag ali številk.\n"
-        "5) Piši v slovenščini, jedrnato, maksimalno 260 besed."
+        "5) Piši v slovenščini, profesionalno, jedrnato."
     )
 
     payload = {
         "model": model,
         "temperature": 0.3,
-        "max_output_tokens": 500,
+        "max_output_tokens": 2000,
         "input": [
             {
                 "role": "system",
@@ -2030,23 +2138,44 @@ def render_view(view_title: str, group_col: str):
                 ensure_ascii=False,
             )
             ai_sig = hashlib.md5(ai_sig_raw.encode("utf-8")).hexdigest()[:12]
+            ai_payload_hash = hashlib.sha256(ai_sig_raw.encode("utf-8")).hexdigest()
+            ai_cache_key = ai_payload_hash
             ai_state_key = f"ai_comment_{group_col}_{selected_region}_{ai_sig}"
             refresh_ai = st.button("Osveži AI komentar", key=f"{ai_state_key}_refresh")
 
             if refresh_ai or ai_state_key not in st.session_state:
-                with st.spinner("Generiram komentar in priporočila..."):
-                    ai_text, ai_source, ai_error = generate_region_ai_commentary(
-                        selected_region,
-                        group_sections,
-                    )
-                st.session_state[ai_state_key] = {
-                    "text": ai_text,
-                    "source": ai_source,
-                    "error": ai_error,
-                }
+                cached_ai_payload = None if refresh_ai else get_cached_ai_commentary(ai_cache_key)
+                if cached_ai_payload:
+                    st.session_state[ai_state_key] = {
+                        "text": cached_ai_payload.get("text", ""),
+                        "source": "db_cache",
+                        "error": None,
+                    }
+                else:
+                    with st.spinner("Generiram komentar in priporočila..."):
+                        ai_text, ai_source, ai_error = generate_region_ai_commentary(
+                            selected_region,
+                            group_sections,
+                        )
+                    st.session_state[ai_state_key] = {
+                        "text": ai_text,
+                        "source": ai_source,
+                        "error": ai_error,
+                    }
+                    if ai_source == "ai" and ai_text:
+                        store_cached_ai_commentary(
+                            ai_cache_key,
+                            payload_hash=ai_payload_hash,
+                            region_name=selected_region,
+                            group_name=group_col,
+                            text=ai_text,
+                            model=get_secret_value("OPENAI_MODEL", "gpt-5.4"),
+                        )
 
             ai_payload = st.session_state.get(ai_state_key, {})
-            if ai_payload.get("source") == "fallback":
+            if ai_payload.get("source") == "db_cache":
+                st.caption("AI komentar je prebran iz trajnega podatkovnega cache-a.")
+            elif ai_payload.get("source") == "fallback":
                 err_txt = str(ai_payload.get("error") or "")
                 if "insufficient_quota" in err_txt:
                     st.caption("OPENAI_API_KEY nima več razpoložljive kvote. Prikazan je samodejni komentar na osnovi kazalnikov.")
