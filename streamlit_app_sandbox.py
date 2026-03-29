@@ -1750,7 +1750,7 @@ with col_center:
     ""
 
 with col_right:
-    st.image("Top_right_logo.jpg", width= 300)
+    ""
 
 st.markdown(
     """
@@ -2085,112 +2085,6 @@ def render_view(view_title: str, group_col: str):
             region_name=selected_region,
         )
 
-        if group_sections:
-            st.markdown("**Top/Bottom po skupinah kazalnikov**")
-            st.caption("Vsaka skupina kazalnikov ima ločeno razvrstitev. Za povprečja in indekse je uporabljen neposreden odmik glede na Slovenijo (%). Za kumulativne kazalnike je uporabljen odmik deleža kazalnika glede na referenčni delež regije (o.t.), da velikost območja ne izkrivlja rezultatov.")
-
-            tab_labels = [
-                f"{GROUP_COLOR_EMOJI.get(section['group'], '•')} {section['group']} ({section['limit']}/{section['limit']})"
-                for section in group_sections
-            ]
-            group_tabs = st.tabs(tab_labels)
-            table_cols = [
-                "Kazalnik",
-                "Smer kazalnika",
-                "Vrednost območja",
-                "Osnova (Slovenija)",
-                "Metoda primerjave",
-                "Odstopanje glede na smer",
-                "Primerjalni odmik",
-            ]
-
-            for tab, section in zip(group_tabs, group_sections):
-                with tab:
-                    best_col, worst_col = st.columns(2)
-                    with best_col:
-                        st.markdown(f"**Top {section['limit']} (boljše od osnove)**")
-                        st.dataframe(
-                            section["best_df"][table_cols],
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                    with worst_col:
-                        st.markdown(f"**Bottom {section['limit']} (slabše od osnove)**")
-                        st.dataframe(
-                            section["worst_df"][table_cols],
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-
-            st.markdown("**AI komentar in priporočila za območje**")
-            ai_sig_raw = json.dumps(
-                {
-                    "region": selected_region,
-                    "groups": [
-                        {
-                            "group": section["group"],
-                            "top": section["top_rows"],
-                            "bottom": section["bottom_rows"],
-                        }
-                        for section in group_sections
-                    ],
-                },
-                ensure_ascii=False,
-            )
-            ai_sig = hashlib.md5(ai_sig_raw.encode("utf-8")).hexdigest()[:12]
-            ai_payload_hash = hashlib.sha256(ai_sig_raw.encode("utf-8")).hexdigest()
-            ai_cache_key = ai_payload_hash
-            ai_state_key = f"ai_comment_{group_col}_{selected_region}_{ai_sig}"
-            refresh_ai = st.button("Osveži AI komentar", key=f"{ai_state_key}_refresh")
-
-            if refresh_ai or ai_state_key not in st.session_state:
-                cached_ai_payload = None if refresh_ai else get_cached_ai_commentary(ai_cache_key)
-                if cached_ai_payload:
-                    st.session_state[ai_state_key] = {
-                        "text": cached_ai_payload.get("text", ""),
-                        "source": "db_cache",
-                        "error": None,
-                    }
-                else:
-                    with st.spinner("Generiram komentar in priporočila..."):
-                        ai_text, ai_source, ai_error = generate_region_ai_commentary(
-                            selected_region,
-                            group_sections,
-                        )
-                    st.session_state[ai_state_key] = {
-                        "text": ai_text,
-                        "source": ai_source,
-                        "error": ai_error,
-                    }
-                    if ai_source == "ai" and ai_text:
-                        store_cached_ai_commentary(
-                            ai_cache_key,
-                            payload_hash=ai_payload_hash,
-                            region_name=selected_region,
-                            group_name=group_col,
-                            text=ai_text,
-                            model=get_secret_value("OPENAI_MODEL", "gpt-5.4"),
-                        )
-
-            ai_payload = st.session_state.get(ai_state_key, {})
-            if ai_payload.get("source") == "db_cache":
-                st.caption("AI komentar je prebran iz trajnega podatkovnega cache-a.")
-            elif ai_payload.get("source") == "fallback":
-                err_txt = str(ai_payload.get("error") or "")
-                if "insufficient_quota" in err_txt:
-                    st.caption("OPENAI_API_KEY nima več razpoložljive kvote. Prikazan je samodejni komentar na osnovi kazalnikov.")
-                elif "HTTP 429" in err_txt:
-                    st.caption("AI klic je omejen zaradi preveč zahtevkov (rate limit). Prikazan je samodejni komentar na osnovi kazalnikov.")
-                else:
-                    st.caption("OPENAI_API_KEY ni nastavljen ali AI klic ni uspel. Prikazan je samodejni komentar na osnovi kazalnikov.")
-            if ai_payload.get("error"):
-                st.caption(f"Podrobnosti: {ai_payload['error']}")
-            if ai_payload.get("text"):
-                st.markdown(ai_payload["text"])
-        else:
-            st.info("Za Top/Bottom analizo po skupinah ni na voljo dovolj kazalnikov.")
-
-
     st.markdown("---")
     st.subheader("Zemljevid in razčlenitev")
     st.caption("Skupni pogled: Skupni podatki za posamezna območja. Posamezno območje: meje občin ter deleži znotraj območja. Dodan je tudi delež Občine glede na območje (kjer je smiselno).")
@@ -2291,6 +2185,112 @@ def render_view(view_title: str, group_col: str):
                     st.caption("**Opomba:** Delež posamezne občine znotraj opazovane makro destinacije (%) je prikazan za kazalnike, kjer se vrednosti seštevajo. Primerjalni indeks vrednosti kazalnika posamezne občine v primerjavi z vrednostjo enakega kazalnika na ravni opazovane makro destinacije pa je prikazan za kompleksnejše oz. izračunane kazalnike, katerih vrednosti se ne seštevajo. ")
                 elif view_title == "Perspektivne destinacije":
                     st.caption("**Opomba:** Delež posamezne občine znotraj opazovane perspektivne destinacije (%) je prikazan za kazalnike, kjer se vrednosti seštevajo. Primerjalni indeks vrednosti kazalnika posamezne občine v primerjavi z vrednostjo enakega kazalnika na ravni opazovane perspektivne destinacije pa je prikazan za kompleksnejše oz. izračunane kazalnike, katerih vrednosti se ne seštevajo. ")    
+
+    if selected_region != "Vsa območja":
+        st.markdown("---")
+        if group_sections:
+            st.markdown("**Najboljši/Najslabši kazalniki glede na skupinah**")
+            st.caption("Vsaka skupina kazalnikov ima ločeno razvrstitev. Za povprečja in indekse je uporabljen neposreden odmik glede na Slovenijo (%). Za kumulativne kazalnike je uporabljen odmik deleža kazalnika glede na referenčni delež regije (o.t.), da velikost območja ne izkrivlja rezultatov.")
+
+            tab_labels = [
+                f"{GROUP_COLOR_EMOJI.get(section['group'], '•')} {section['group']} ({section['limit']}/{section['limit']})"
+                for section in group_sections
+            ]
+            group_tabs = st.tabs(tab_labels)
+            table_cols = [
+                "Kazalnik",
+                "Smer kazalnika",
+                "Vrednost območja",
+                "Osnova (Slovenija)",
+                "Metoda primerjave",
+                "Odstopanje glede na smer",
+                "Primerjalni odmik",
+            ]
+
+            for tab, section in zip(group_tabs, group_sections):
+                with tab:
+                    best_col, worst_col = st.columns(2)
+                    with best_col:
+                        st.markdown(f"**Najboljši {section['limit']}**")
+                        st.dataframe(
+                            section["best_df"][table_cols],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    with worst_col:
+                        st.markdown(f"**Najslabši {section['limit']}**")
+                        st.dataframe(
+                            section["worst_df"][table_cols],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+            st.markdown("**AI komentar in priporočila za območje**")
+            ai_sig_raw = json.dumps(
+                {
+                    "region": selected_region,
+                    "groups": [
+                        {
+                            "group": section["group"],
+                            "top": section["top_rows"],
+                            "bottom": section["bottom_rows"],
+                        }
+                        for section in group_sections
+                    ],
+                },
+                ensure_ascii=False,
+            )
+            ai_sig = hashlib.md5(ai_sig_raw.encode("utf-8")).hexdigest()[:12]
+            ai_payload_hash = hashlib.sha256(ai_sig_raw.encode("utf-8")).hexdigest()
+            ai_cache_key = ai_payload_hash
+            ai_state_key = f"ai_comment_{group_col}_{selected_region}_{ai_sig}"
+
+            if ai_state_key not in st.session_state:
+                cached_ai_payload = get_cached_ai_commentary(ai_cache_key)
+                if cached_ai_payload:
+                    st.session_state[ai_state_key] = {
+                        "text": cached_ai_payload.get("text", ""),
+                        "source": "db_cache",
+                        "error": None,
+                    }
+                else:
+                    with st.spinner("Generiram komentar in priporočila..."):
+                        ai_text, ai_source, ai_error = generate_region_ai_commentary(
+                            selected_region,
+                            group_sections,
+                        )
+                    st.session_state[ai_state_key] = {
+                        "text": ai_text,
+                        "source": ai_source,
+                        "error": ai_error,
+                    }
+                    if ai_source == "ai" and ai_text:
+                        store_cached_ai_commentary(
+                            ai_cache_key,
+                            payload_hash=ai_payload_hash,
+                            region_name=selected_region,
+                            group_name=group_col,
+                            text=ai_text,
+                            model=get_secret_value("OPENAI_MODEL", "gpt-5.4"),
+                        )
+
+            ai_payload = st.session_state.get(ai_state_key, {})
+            if ai_payload.get("source") == "db_cache":
+                st.caption("AI komentar je prebran iz trajnega podatkovnega cache-a.")
+            elif ai_payload.get("source") == "fallback":
+                err_txt = str(ai_payload.get("error") or "")
+                if "insufficient_quota" in err_txt:
+                    st.caption("OPENAI_API_KEY nima več razpoložljive kvote. Prikazan je samodejni komentar na osnovi kazalnikov.")
+                elif "HTTP 429" in err_txt:
+                    st.caption("AI klic je omejen zaradi preveč zahtevkov (rate limit). Prikazan je samodejni komentar na osnovi kazalnikov.")
+                else:
+                    st.caption("OPENAI_API_KEY ni nastavljen ali AI klic ni uspel. Prikazan je samodejni komentar na osnovi kazalnikov.")
+            if ai_payload.get("error"):
+                st.caption(f"Podrobnosti: {ai_payload['error']}")
+            if ai_payload.get("text"):
+                st.markdown(ai_payload["text"])
+        else:
+            st.info("Za Top/Bottom analizo po skupinah ni na voljo dovolj kazalnikov.")
 
 def render_market_structure(view_title: str, group_col: str, market_cols: list[str], market_labels: list[str]):
     st.caption(f"**Pogled:** {view_title}")
@@ -2520,6 +2520,5 @@ with tab_trgi:
 st.image("footer_logo.jpg", width= 200)
 
 st.caption("Viri podatkov: SURS, AJPES, Narodna Banka Slovenije, Slovenska Turistična Organizacija, Lastna obdelava, izračuni in dodatne ocene manjkajočih podatkov - Hosting Management & Consulting d.o.o.")
-st.caption("Naročnik projekta analize destinacijskih podatkov za leto 2024: Ministrstvo za gospodarstvo, turizem in šport RS, 2025")
 st.caption("Avtor, izvajalec in skrbnik aplikacije: Hosting Management & Consulting d.o.o., kontakt: info@hosting.si, tel. +386 (0)41 514 020")
 st.markdown("---")
