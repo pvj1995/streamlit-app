@@ -533,15 +533,16 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         )
 
     st.markdown("---")
-    st.subheader("Zemljevid in razčlenitev")
-    st.caption(
-        "Skupni pogled: Skupni podatki za posamezna območja. Posamezno območje: "
-        "meje občin ter deleži znotraj območja. Dodan je tudi delež Občine glede "
-        "na območje (kjer je smiselno)."
-    )
+    
 
     map_col, table_col = st.columns([2.2, 1.0], gap="large")
     with map_col:
+        st.subheader("Zemljevid in razčlenitev")
+        st.caption(
+        "Skupni pogled: Skupni podatki za posamezna območja. Posamezno območje: "
+        "meje občin ter deleži znotraj območja. Dodan je tudi delež Občine glede "
+        "na območje (kjer je smiselno)."
+        )
         if ctx.geojson_obj is None or ctx.geojson_name_prop is None:
             st.info("Za zemljevid naloži občinski GeoJSON (npr. `si.json`).")
         else:
@@ -590,7 +591,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
     with table_col:
         if selected_region == "Vsa območja":
-            st.markdown(f"**Tabela območij** \n \n **:blue[{map_indicator}]**")
+            st.subheader(f"Tabela območij \n \n **:blue[{map_indicator}]**")
             table = region_agg[[group_col, map_indicator]].copy()
             table = table.sort_values(map_indicator, ascending=False, na_position="last")
             table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
@@ -600,7 +601,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             table = table.rename(columns={map_indicator: "Vrednost"})
             st.dataframe(table, use_container_width=True, height=680, hide_index=True, column_config=column_config)
         else:
-            st.markdown(f"**Tabela občin znotraj območja** \n \n **:blue[{map_indicator}]**")
+            st.subheader(f"Tabela občin znotraj območja \n \n **:blue[{map_indicator}]**")
             region_df = numeric_df[numeric_df[group_col] == selected_region].copy()
             region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, None)
             table = build_region_indicator_table(region_df, map_indicator, region_total, view_title)

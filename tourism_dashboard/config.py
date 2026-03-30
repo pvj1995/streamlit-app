@@ -40,6 +40,7 @@ GEOJSON_FILENAME = "si.json"
 MAPPING_XLSX_FILENAME = "mapping.xlsx"
 TITLE_FALLBACK_FILENAME = "Title.jpg"
 AI_ICON_FILENAME = "AI image.png"
+AI_BANNER_FILENAME = "Banner AI analizy.jpg"
 FOOTER_LOGO_FILENAME = "footer_logo.jpg"
 
 GROUP_COLOR_EMOJI = {

@@ -12,6 +12,8 @@ The app combines:
 
 The codebase is modularized under `tourism_dashboard/`, while `streamlit_app_sandbox.py` is the entrypoint that wires the modules together.
 
+Short Slovenian end-user guide: [README_uporabnik.md](./README_uporabnik.md)
+
 ## What the app does
 
 The app loads a master Excel file with tourism indicators and a municipal GeoJSON, then lets the user:

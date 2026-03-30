@@ -4,6 +4,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 ASSETS_DIR = BASE_DIR / "assets"
+BANNERS_DIR = ASSETS_DIR / "banners"
 BUTTONS_DIR = ASSETS_DIR / "buttons"
 ICONS_DIR = ASSETS_DIR / "icons"
 LOGOS_DIR = ASSETS_DIR / "logos"
@@ -18,4 +19,3 @@ def first_existing(*paths: Path) -> Path:
         if path.exists():
             return path
     return paths[0]
-

@@ -8,6 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from tourism_dashboard.config import (
+    AI_BANNER_FILENAME,
     AI_ICON_FILENAME,
     APP_DESCRIPTION,
     APP_KICKER,
@@ -18,6 +19,7 @@ from tourism_dashboard.config import (
 )
 from tourism_dashboard.paths import (
     BASE_DIR,
+    BANNERS_DIR,
     BUTTONS_DIR,
     ICONS_DIR,
     TITLE_DIR,
@@ -41,6 +43,24 @@ def get_button_image_path(group_key: str) -> Path:
 
 def get_ai_icon_path() -> Path:
     return first_existing(ICONS_DIR / AI_ICON_FILENAME, BASE_DIR / AI_ICON_FILENAME)
+
+
+def get_ai_banner_path() -> Path | None:
+    preferred = first_existing(BANNERS_DIR / AI_BANNER_FILENAME, BASE_DIR / AI_BANNER_FILENAME)
+    if preferred.exists():
+        return preferred
+
+    if BANNERS_DIR.exists() and BANNERS_DIR.is_dir():
+        candidates = sorted(
+            [
+                path for path in BANNERS_DIR.iterdir()
+                if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+            ]
+        )
+        if candidates:
+            return candidates[0]
+
+    return None
 
 
 def get_title_fallback_path() -> Path:
@@ -304,8 +324,8 @@ def render_page_header():
         }}
         .title-panel-content {{
             position: absolute;
-            left: 28px;
-            bottom: 28px;
+            left: 0px;
+            bottom: 0px;
             width: min(74%, 1200px);
             padding: 22px 26px;
             display: flex;
@@ -410,6 +430,64 @@ def render_page_header():
 
 
 def render_ai_section_header():
+    ai_banner_path = get_ai_banner_path()
+    ai_banner_uri = image_path_to_data_uri(str(ai_banner_path)) if ai_banner_path is not None else None
+
+    if ai_banner_uri:
+        st.markdown(
+            f"""
+            <div style="
+                position: relative;
+                overflow: hidden;
+                margin: 0.15rem 0 0.8rem 0;
+                border-radius: 18px;
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+            ">
+                <img
+                    src="{ai_banner_uri}"
+                    alt="AI banner"
+                    style="
+                        display: block;
+                        width: 100%;
+                        height: auto;
+                    "
+                />
+                <div style="
+                    position: absolute;
+                    inset: 0;
+                    display: flex;
+                    align-items: center;
+                    padding: 0.95rem 1.1rem;
+                    pointer-events: none;
+                ">
+                    <div style="
+                        margin-left: clamp(8.5rem, 12vw, 16rem);
+                        max-width: min(38rem, 56%);
+                        padding: 0.85rem 1.05rem;
+                        border-radius: 14px;
+                        background: rgba(15, 23, 42, 0.40);
+                        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
+                        backdrop-filter: blur(1.5px);
+                        -webkit-backdrop-filter: blur(1.5px);
+                    ">
+                        <div style="
+                            font-family: 'Source Sans', sans-serif;
+                            font-size: clamp(1.2rem, 2vw, 2rem);
+                            font-weight: 600;
+                            line-height: 1.2;
+                            color: #ffffff;
+                            text-shadow: 0 2px 10px rgba(15, 23, 42, 0.32);
+                        ">
+                            AI komentar in priporočila za območje
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
     ai_icon_uri = image_path_to_data_uri(str(get_ai_icon_path()))
     st.markdown(
         f"""
@@ -422,4 +500,3 @@ def render_ai_section_header():
         """,
         unsafe_allow_html=True,
     )
-
