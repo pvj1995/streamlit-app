@@ -2550,7 +2550,7 @@ def render_view(view_title: str, group_col: str):
     if selected_region != "Vsa območja":
         st.markdown("---")
         if group_sections:
-            st.markdown("**Najboljši/Najslabši kazalniki po skupinah**")
+            st.subheader("**Najboljši/Najslabši kazalniki po skupinah**")
             st.caption("Vsaka skupina kazalnikov ima ločeno razvrstitev. Za povprečja in indekse je uporabljen neposreden odmik glede na Slovenijo (%). Za kumulativne kazalnike je uporabljen odmik deleža kazalnika glede na referenčni delež regije (o.t.), da velikost območja ne izkrivlja rezultatov.")
 
             tab_labels = [
@@ -2562,10 +2562,7 @@ def render_view(view_title: str, group_col: str):
                 "Kazalnik",
                 "Smer kazalnika",
                 "Vrednost območja",
-                "Osnova (Slovenija)",
-                "Metoda primerjave",
-                "Odstopanje glede na smer",
-                "Primerjalni odmik",
+                "Osnova (Slovenija)"
             ]
 
             for tab, section in zip(group_tabs, group_sections):
@@ -2586,7 +2583,19 @@ def render_view(view_title: str, group_col: str):
                             hide_index=True,
                         )
 
-            st.markdown("**AI komentar in priporočila za območje**")
+            st.markdown("---")
+            ai_icon_uri = image_path_to_data_uri(str(Path(__file__).parent / "AI image.png"))
+            st.markdown(
+                f"""
+                <div style="display:flex; align-items:center; gap:0.4rem; margin:0.1rem 0 0.7rem 0;">
+                    <img src="{ai_icon_uri or ''}" alt="AI" style="width:72px; height:72px; object-fit:contain; display:block;" />
+                    <div style="font-family:'Source Sans', sans-serif; font-size:1.75rem; font-weight:600; line-height:1.6; margin:0; color:inherit;">
+                        AI komentar in priporočila za območje
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
             ai_sig_raw = json.dumps(
                 {
                     "region": selected_region,
