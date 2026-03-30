@@ -1,0 +1,820 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from tourism_dashboard.ai import (
+    generate_region_ai_commentary,
+    get_cached_ai_commentary,
+    store_cached_ai_commentary,
+)
+from tourism_dashboard.analytics import (
+    build_top_bottom_group_sections,
+    compute_region_aggregates,
+    get_market_cols_for_year,
+    aggregate_indicator_with_rules,
+)
+from tourism_dashboard.assets import (
+    get_button_image_path,
+    prepare_group_button_image,
+    render_ai_section_header,
+)
+from tourism_dashboard.config import (
+    AGG_RULES,
+    GROUP_COLOR_EMOJI,
+    INDIKATORJI_Z_INDEKSI,
+    INDIKATORJI_Z_OPOMBO,
+    MARKET_COLOR_MAP,
+    MARKET_PREFIX,
+    SKUPNO_OPOZORILO_AGREGACIJA,
+)
+from tourism_dashboard.formatting import (
+    format_indicator_value_map,
+    format_indicator_value_tables,
+    format_pct,
+    format_si_number,
+    is_rate_like,
+    make_localized_column_config,
+)
+from tourism_dashboard.helpers import get_secret_value, normalize_name, parse_numeric, shorten_label, col_for_year
+from tourism_dashboard.maps import (
+    build_region_geojson_from_municipalities,
+    render_map_municipalities,
+    render_map_regions,
+)
+from tourism_dashboard.models import DashboardContext
+
+
+if TYPE_CHECKING:
+    from streamlit_image_select import image_select
+else:
+    try:
+        from streamlit_image_select import image_select
+    except Exception:
+        image_select = None
+
+
+def show_shared_warning_if_needed_indicator(indicator_name: str):
+    if indicator_name not in INDIKATORJI_Z_OPOMBO:
+        return
+    st.warning(SKUPNO_OPOZORILO_AGREGACIJA["title"], icon="⚠️")
+
+
+def show_shared_warning_if_needed_map(indicator_name: str):
+    if indicator_name not in INDIKATORJI_Z_OPOMBO:
+        return
+    st.warning(SKUPNO_OPOZORILO_AGREGACIJA["text"], icon="⚠️")
+
+
+def green_metric(label, value):
+    st.markdown(
+        f"""
+        <div style="
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            background-color: #f0fdf4;
+            border: 1px solid #16a34a;
+            text-align: center;
+        ">
+            <div style="color:#15803d; font-size:0.85rem;">{label}</div>
+            <div style="color:#166534; font-size:1.5rem; font-weight:600;">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def green_metric_small(label, value):
+    st.markdown(
+        f"""
+        <div style="
+            margin-top: 0.35rem;
+            padding: 0.45rem 0.55rem;
+            border-radius: 0.45rem;
+            background-color: #f0fdf4;
+            border: 1px solid #16a34a;
+            line-height: 1.15;
+        ">
+            <div style="color:#15803d; font-size:0.75rem;">{label}</div>
+            <div style="color:#166534; font-size:1.05rem; font-weight:600;">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def build_filtered_indicator_groups(
+    indicator_cols: list[str],
+    grouped_indicators: dict[str, list[str]],
+) -> tuple[dict[str, list[str]], dict[str, str]]:
+    grouped_filtered: dict[str, list[str]] = {}
+    indicator_to_group: dict[str, str] = {}
+    indicator_set = set(indicator_cols)
+
+    for group_name, items in grouped_indicators.items():
+        filtered = [indicator for indicator in items if indicator in indicator_set]
+        if not filtered:
+            continue
+        grouped_filtered[group_name] = filtered
+        for indicator in filtered:
+            indicator_to_group.setdefault(indicator, group_name)
+
+    return grouped_filtered, indicator_to_group
+
+
+def build_group_selector_specs(
+    indicator_cols: list[str],
+    grouped_filtered: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    return [
+        {"key": "__all__", "label": "Vsi kazalniki", "count": len(indicator_cols)},
+        {
+            "key": "Družbeni kazalniki",
+            "label": "Družbeni kazalniki",
+            "count": len(grouped_filtered.get("Družbeni kazalniki", [])),
+        },
+        {
+            "key": "Okoljski kazalniki",
+            "label": "Okoljski kazalniki",
+            "count": len(grouped_filtered.get("Okoljski kazalniki", [])),
+        },
+        {
+            "key": "Ekonomski nastanitveni in tržni turistični kazalniki",
+            "label": "Nastanitveni\nin tržni",
+            "count": len(grouped_filtered.get("Ekonomski nastanitveni in tržni turistični kazalniki", [])),
+        },
+        {
+            "key": "Ekonomsko poslovni kazalniki turistične dejavnosti",
+            "label": "Ekon.\nposlovni",
+            "count": len(grouped_filtered.get("Ekonomsko poslovni kazalniki turistične dejavnosti", [])),
+        },
+    ]
+
+
+def render_group_selector(
+    group_col: str,
+    indicator_cols: list[str],
+    grouped_filtered: dict[str, list[str]],
+) -> str:
+    selector_state_key = f"sel_group_img_{group_col}"
+    if selector_state_key not in st.session_state:
+        st.session_state[selector_state_key] = "__all__"
+
+    group_specs = build_group_selector_specs(indicator_cols, grouped_filtered)
+    valid_group_keys = {spec["key"] for spec in group_specs}
+    if st.session_state[selector_state_key] not in valid_group_keys:
+        st.session_state[selector_state_key] = "__all__"
+
+    st.markdown("**Skupina kazalnikov**")
+
+    selector_images = []
+    image_selector_ready = image_select is not None
+    for spec in group_specs:
+        image_path = get_button_image_path(spec["key"])
+        if not image_path.exists():
+            image_selector_ready = False
+            selector_images.append("")
+            continue
+        prepared_path = prepare_group_button_image(str(image_path), "")
+        selector_images.append(prepared_path or str(image_path))
+
+    default_idx = next(
+        (index for index, spec in enumerate(group_specs) if spec["key"] == st.session_state[selector_state_key]),
+        0,
+    )
+
+    if image_selector_ready:
+        image_select_fn = image_select
+        selected_value = image_select_fn(
+            label="",
+            images=selector_images,
+            index=default_idx,
+            use_container_width=False,
+            return_value="index",
+            key=f"sel_group_img_component_{group_col}",
+        )
+
+        selected_idx = default_idx
+        if isinstance(selected_value, int) and 0 <= selected_value < len(group_specs):
+            selected_idx = selected_value
+
+        candidate = group_specs[selected_idx]
+        if candidate["key"] == "__all__" or candidate["count"] > 0:
+            st.session_state[selector_state_key] = candidate["key"]
+    else:
+        st.warning(
+            "Manjka komponenta `streamlit-image-select` ali ena od slik za gumbe. "
+            "Uporabljam rezervni izbor."
+        )
+        fallback_options: list[str] = [str(spec["key"]) for spec in group_specs]
+        fallback_labels: dict[str, str] = {
+            "__all__": f"Vsi kazalniki ({len(indicator_cols)})",
+            "Družbeni kazalniki": f"Družbeni kazalniki ({len(grouped_filtered.get('Družbeni kazalniki', []))})",
+            "Okoljski kazalniki": f"Okoljski kazalniki ({len(grouped_filtered.get('Okoljski kazalniki', []))})",
+            "Ekonomski nastanitveni in tržni turistični kazalniki": (
+                "Ekonomski nastanitveni in tržni turistični kazalniki "
+                f"({len(grouped_filtered.get('Ekonomski nastanitveni in tržni turistični kazalniki', []))})"
+            ),
+            "Ekonomsko poslovni kazalniki turistične dejavnosti": (
+                "Ekonomsko poslovni kazalniki turistične dejavnosti "
+                f"({len(grouped_filtered.get('Ekonomsko poslovni kazalniki turistične dejavnosti', []))})"
+            ),
+        }
+
+        def format_fallback_group_label(key: str) -> str:
+            return fallback_labels[key] if key in fallback_labels else key
+
+        selected_fallback = st.selectbox(
+            "Skupina kazalnikov",
+            options=fallback_options,
+            index=default_idx,
+            format_func=format_fallback_group_label,
+            key=f"sel_group_ind_{group_col}",
+        )
+        st.session_state[selector_state_key] = selected_fallback
+
+    return st.session_state[selector_state_key]
+
+
+def build_region_indicator_table(
+    region_df: pd.DataFrame,
+    indicator: str,
+    region_total,
+    view_title: str,
+) -> pd.DataFrame:
+    table = pd.DataFrame(
+        {
+            "Občina": region_df["Občine"].astype(str),
+            "Vrednost": region_df[indicator].astype(float).apply(lambda value: format_indicator_value_tables(indicator, value)),
+        }
+    )
+
+    if region_total and not np.isnan(region_total) and region_total != 0 and not is_rate_like(indicator):
+        if indicator in INDIKATORJI_Z_INDEKSI:
+            table[f"Indeks {view_title}"] = round((table["Vrednost"] / region_total) * 100, 1)
+        else:
+            table[f"Delež {view_title} (%)"] = round(table["Vrednost"] / region_total, 3)
+
+    return table.sort_values("Vrednost", ascending=False, na_position="last")
+
+
+def format_indicator_option_label(indicator: str, indicator_to_group: dict[str, str]) -> str:
+    group_name = indicator_to_group[indicator] if indicator in indicator_to_group else ""
+    emoji = GROUP_COLOR_EMOJI[group_name] if group_name in GROUP_COLOR_EMOJI else "•"
+    return f"{emoji} {indicator}"
+
+
+def render_region_top_bottom_and_ai(
+    selected_region: str,
+    group_col: str,
+    group_sections: list[dict[str, Any]],
+) -> None:
+    if not group_sections:
+        st.info("Za Top/Bottom analizo po skupinah ni na voljo dovolj kazalnikov.")
+        return
+
+    st.markdown("---")
+    st.subheader("**Najboljši/Najslabši kazalniki po skupinah**")
+    st.caption(
+        "Vsaka skupina kazalnikov ima ločeno razvrstitev. Za povprečja in indekse "
+        "je uporabljen neposreden odmik glede na Slovenijo (%). Za kumulativne "
+        "kazalnike je uporabljen odmik deleža kazalnika glede na referenčni delež "
+        "regije (o.t.), da velikost območja ne izkrivlja rezultatov."
+    )
+
+    tab_labels = [
+        f"{GROUP_COLOR_EMOJI.get(section['group'], '•')} {section['group']} ({section['limit']}/{section['limit']})"
+        for section in group_sections
+    ]
+    group_tabs = st.tabs(tab_labels)
+    table_cols = ["Kazalnik", "Smer kazalnika", "Vrednost območja", "Osnova (Slovenija)"]
+
+    for tab, section in zip(group_tabs, group_sections):
+        with tab:
+            best_col, worst_col = st.columns(2)
+            with best_col:
+                st.markdown(f"**Najboljši {section['limit']}**")
+                st.dataframe(section["best_df"][table_cols], use_container_width=True, hide_index=True)
+            with worst_col:
+                st.markdown(f"**Najslabši {section['limit']}**")
+                st.dataframe(section["worst_df"][table_cols], use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    render_ai_section_header()
+
+    ai_signature_raw = json.dumps(
+        {
+            "region": selected_region,
+            "groups": [
+                {
+                    "group": section["group"],
+                    "top": section["top_rows"],
+                    "bottom": section["bottom_rows"],
+                }
+                for section in group_sections
+            ],
+        },
+        ensure_ascii=False,
+    )
+    ai_signature = hashlib.md5(ai_signature_raw.encode("utf-8")).hexdigest()[:12]
+    ai_payload_hash = hashlib.sha256(ai_signature_raw.encode("utf-8")).hexdigest()
+    ai_cache_key = ai_payload_hash
+    ai_state_key = f"ai_comment_{group_col}_{selected_region}_{ai_signature}"
+
+    if ai_state_key not in st.session_state:
+        cached_payload = get_cached_ai_commentary(ai_cache_key)
+        if cached_payload:
+            st.session_state[ai_state_key] = {
+                "text": cached_payload.get("text", ""),
+                "source": "db_cache",
+                "error": None,
+            }
+        else:
+            with st.spinner("Generiram komentar in priporočila..."):
+                ai_text, ai_source, ai_error = generate_region_ai_commentary(selected_region, group_sections)
+            st.session_state[ai_state_key] = {
+                "text": ai_text,
+                "source": ai_source,
+                "error": ai_error,
+            }
+            if ai_source == "ai" and ai_text:
+                store_cached_ai_commentary(
+                    ai_cache_key,
+                    payload_hash=ai_payload_hash,
+                    region_name=selected_region,
+                    group_name=group_col,
+                    text=ai_text,
+                    model=str(get_secret_value("OPENAI_MODEL", "gpt-5.4") or "gpt-5.4"),
+                )
+
+    ai_payload = st.session_state.get(ai_state_key, {})
+    if ai_payload.get("source") == "db_cache":
+        st.caption("AI komentar je prebran iz trajnega podatkovnega cache-a.")
+    elif ai_payload.get("source") == "fallback":
+        error_text = str(ai_payload.get("error") or "")
+        if "insufficient_quota" in error_text:
+            st.caption("OPENAI_API_KEY nima več razpoložljive kvote. Prikazan je samodejni komentar na osnovi kazalnikov.")
+        elif "HTTP 429" in error_text:
+            st.caption("AI klic je omejen zaradi preveč zahtevkov (rate limit). Prikazan je samodejni komentar na osnovi kazalnikov.")
+        else:
+            st.caption("OPENAI_API_KEY ni nastavljen ali AI klic ni uspel. Prikazan je samodejni komentar na osnovi kazalnikov.")
+
+    if ai_payload.get("error"):
+        st.caption(f"Podrobnosti: {ai_payload['error']}")
+    if ai_payload.get("text"):
+        st.markdown(ai_payload["text"])
+
+
+def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
+    st.caption(f"**Pogled:** {view_title}")
+
+    meta_cols = ctx.meta_cols | {group_col}
+    indicator_cols = [column for column in ctx.df.columns if column not in meta_cols and column not in ctx.market_cols]
+    grouped_filtered, indicator_to_group = build_filtered_indicator_groups(indicator_cols, ctx.grouped_indicators)
+
+    df_regions = ctx.df[ctx.df[group_col].notna()].copy()
+    regions = sorted(df_regions[group_col].dropna().unique().tolist())
+    regions_with_all = ["Vsa območja"] + regions
+
+    numeric_df = df_regions.copy()
+    for column in indicator_cols:
+        numeric_df[column] = parse_numeric(numeric_df[column])
+
+    df_slo_total = ctx.df.iloc[0]
+    df_slo_total_num = parse_numeric(df_slo_total[indicator_cols])
+    municipality_to_region = {
+        normalize_name(municipality): region
+        for municipality, region in zip(df_regions["Občine"], df_regions[group_col])
+    }
+
+    selected_region = st.selectbox(group_col, regions_with_all, index=0, key=f"sel_group_{group_col}")
+
+    st.markdown("---")
+    selector_col, map_indicator_col = st.columns([1, 1], gap="large")
+    with selector_col:
+        selected_group_key = render_group_selector(group_col, indicator_cols, grouped_filtered)
+
+    group_indicator_cols = indicator_cols if selected_group_key == "__all__" else grouped_filtered.get(selected_group_key, [])
+    if not group_indicator_cols:
+        group_indicator_cols = indicator_cols
+
+    with map_indicator_col:
+        st.markdown("<div style='min-height: 10rem;'></div>", unsafe_allow_html=True)
+        map_indicator = st.selectbox(
+            "Kazalnik za zemljevid",
+            group_indicator_cols,
+            index=0,
+            key=f"sel_ind_{group_col}",
+            format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
+        )
+        show_shared_warning_if_needed_indicator(map_indicator)
+
+    dash_inds = []
+    if ctx.dashboard_mode:
+        dash_inds = st.multiselect(
+            "Kazalniki za dashboard (do 6)",
+            group_indicator_cols,
+            default=group_indicator_cols[:0] if len(group_indicator_cols) >= 4 else group_indicator_cols,
+            max_selections=6,
+            placeholder="Izberi kazalnik",
+            key=f"dash_{group_col}",
+            format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
+        )
+
+    agg_needed = [map_indicator] + [indicator for indicator in dash_inds if indicator != map_indicator]
+    region_agg = compute_region_aggregates(numeric_df, regions, agg_needed, AGG_RULES, group_col=group_col)
+    region_to_value_map = dict(zip(region_agg[group_col], region_agg[map_indicator]))
+
+    regions_geojson = None
+    if selected_region == "Vsa območja" and ctx.geojson_obj and ctx.geojson_name_prop:
+        regions_geojson = build_region_geojson_from_municipalities(
+            ctx.geojson_obj,
+            ctx.geojson_name_prop,
+            municipality_to_region,
+            group_col=group_col,
+        )
+
+    group_sections = []
+    if selected_region == "Vsa območja":
+        st.subheader("Primerjava območij")
+        cols_to_show = [group_col] + agg_needed
+        show_df = region_agg[cols_to_show].copy()
+        for column in cols_to_show[1:]:
+            show_df[column] = show_df[column].apply(lambda value: format_indicator_value_tables(column, value))
+        show_df = show_df.sort_values(cols_to_show[1], ascending=False, na_position="last")
+
+        st.dataframe(
+            show_df,
+            use_container_width=True,
+            height=260,
+            hide_index=True,
+            column_config=make_localized_column_config(show_df),
+        )
+
+        _, _, kpi_col = st.columns([1, 2, 1])
+        with kpi_col:
+            green_metric(
+                f" Celotna Slovenija - {map_indicator}",
+                format_indicator_value_map(map_indicator, df_slo_total_num.get(map_indicator, np.nan)),
+            )
+    else:
+        st.subheader("Povzetek izbranega območja")
+        region_df = numeric_df[numeric_df[group_col] == selected_region].copy()
+        region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, selected_region)
+        sl_total = df_slo_total_num.get(map_indicator, np.nan)
+
+        share_si = np.nan
+        if (not is_rate_like(map_indicator)) and sl_total and not np.isnan(sl_total) and sl_total != 0:
+            share_si = (region_total / sl_total) * 100.0
+
+        if map_indicator in INDIKATORJI_Z_INDEKSI:
+            kpi_text_main = "Indeks s povprečjem v Sloveniji"
+            kpi_value_main = format_si_number(share_si, 1)
+        else:
+            kpi_text_main = "Delež v Sloveniji"
+            kpi_value_main = format_pct(share_si, 1)
+
+        left_kpi, right_kpi = st.columns([1.2, 1])
+        with left_kpi:
+            if not np.isnan(share_si):
+                st.metric(
+                    map_indicator,
+                    f"{format_indicator_value_map(map_indicator, region_total)}",
+                    f"{kpi_text_main}: {kpi_value_main}",
+                )
+            else:
+                st.metric(map_indicator, f"{format_indicator_value_map(map_indicator, region_total)}")
+            st.caption("Opomba: »Delež v Sloveniji« je prikazan za kazalnike, kjer se vrednosti seštevajo (ne za stopnje/indekse).")
+        with right_kpi:
+            green_metric(f" Celotna Slovenija - {map_indicator}", format_indicator_value_map(map_indicator, sl_total))
+
+        if ctx.dashboard_mode and dash_inds:
+            kpi_cols = st.columns(min(6, len(dash_inds)))
+            for idx, indicator in enumerate(dash_inds[:6]):
+                region_value = float(region_agg.loc[region_agg[group_col] == selected_region, indicator].iloc[0])
+                slovenia_value = df_slo_total_num.get(indicator, np.nan)
+
+                share = np.nan
+                if (not is_rate_like(indicator)) and slovenia_value and not np.isnan(slovenia_value) and slovenia_value != 0:
+                    share = (region_value / slovenia_value) * 100.0
+
+                with kpi_cols[idx]:
+                    if indicator in INDIKATORJI_Z_INDEKSI:
+                        kpi_text_dashboard = "Indeks s povprečjem v Sloveniji"
+                        kpi_value_dashboard = format_si_number(share, 1)
+                    else:
+                        kpi_text_dashboard = "Delež v Sloveniji"
+                        kpi_value_dashboard = format_pct(share, 1)
+
+                    if slovenia_value is not None and not (isinstance(slovenia_value, float) and np.isnan(slovenia_value)):
+                        green_metric_small("Slovenija", format_indicator_value_map(indicator, slovenia_value))
+
+                    if not np.isnan(share):
+                        st.metric(
+                            indicator,
+                            format_indicator_value_map(indicator, region_value),
+                            f"{kpi_text_dashboard}: {kpi_value_dashboard}",
+                        )
+                    else:
+                        st.metric(indicator, format_indicator_value_map(indicator, region_value))
+
+        group_sections = build_top_bottom_group_sections(
+            reg_df=region_df,
+            df_slo_total_num=df_slo_total_num,
+            grouped_filtered=grouped_filtered,
+            agg_rules=AGG_RULES,
+            region_name=selected_region,
+        )
+
+    st.markdown("---")
+    st.subheader("Zemljevid in razčlenitev")
+    st.caption(
+        "Skupni pogled: Skupni podatki za posamezna območja. Posamezno območje: "
+        "meje občin ter deleži znotraj območja. Dodan je tudi delež Občine glede "
+        "na območje (kjer je smiselno)."
+    )
+
+    map_col, table_col = st.columns([2.2, 1.0], gap="large")
+    with map_col:
+        if ctx.geojson_obj is None or ctx.geojson_name_prop is None:
+            st.info("Za zemljevid naloži občinski GeoJSON (npr. `si.json`).")
+        else:
+            if selected_region == "Vsa območja":
+                if regions_geojson is None:
+                    st.warning(
+                        "Ne uspem sestaviti poligonov regij (dissolve). "
+                        "Prikazujem občine obarvane po regijski vrednosti."
+                    )
+                    muni_region_values = {
+                        municipality: region_to_value_map.get(region, np.nan)
+                        for municipality, region in municipality_to_region.items()
+                    }
+                    render_map_municipalities(
+                        ctx.geojson_obj,
+                        ctx.geojson_name_prop,
+                        set(municipality_to_region.keys()),
+                        muni_region_values,
+                        indicator_label=map_indicator,
+                        height=680,
+                    )
+                else:
+                    render_map_regions(
+                        regions_geojson,
+                        region_to_value_map,
+                        indicator_label=map_indicator,
+                        group_col=group_col,
+                        height=780,
+                    )
+            else:
+                region_df = numeric_df[numeric_df[group_col] == selected_region].copy()
+                municipalities_in_region = set(region_df["__obcina_norm__"].tolist())
+                municipality_to_value = {
+                    normalize_name(municipality): float(value)
+                    for municipality, value in zip(region_df["Občine"], region_df[map_indicator])
+                }
+                render_map_municipalities(
+                    ctx.geojson_obj,
+                    ctx.geojson_name_prop,
+                    municipalities_in_region,
+                    municipality_to_value,
+                    indicator_label=map_indicator,
+                    height=780,
+                )
+        show_shared_warning_if_needed_map(map_indicator)
+
+    with table_col:
+        if selected_region == "Vsa območja":
+            st.markdown(f"**Tabela območij** \n \n **:blue[{map_indicator}]**")
+            table = region_agg[[group_col, map_indicator]].copy()
+            table = table.sort_values(map_indicator, ascending=False, na_position="last")
+            table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
+            column_config = make_localized_column_config(table)
+            old_key = next(iter(column_config))
+            column_config["Vrednost"] = column_config.pop(old_key)
+            table = table.rename(columns={map_indicator: "Vrednost"})
+            st.dataframe(table, use_container_width=True, height=680, hide_index=True, column_config=column_config)
+        else:
+            st.markdown(f"**Tabela občin znotraj območja** \n \n **:blue[{map_indicator}]**")
+            region_df = numeric_df[numeric_df[group_col] == selected_region].copy()
+            region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, None)
+            table = build_region_indicator_table(region_df, map_indicator, region_total, view_title)
+            st.dataframe(
+                table,
+                use_container_width=True,
+                height=680,
+                hide_index=True,
+                column_config=make_localized_column_config(table),
+            )
+            if region_total and not np.isnan(region_total) and region_total != 0 and not is_rate_like(map_indicator):
+                if view_title == "Turistične regije":
+                    st.caption(
+                        "**Opomba:** Delež posamezne občine znotraj opazovane turistične regije (%) je prikazan "
+                        "za kazalnike, kjer se vrednosti seštevajo. Primerjalni indeks vrednosti kazalnika "
+                        "posamezne občine v primerjavi z vrednostjo enakega kazalnika na ravni opazovane "
+                        "turistične regije pa je prikazan za kompleksnejše oz. izračunane kazalnike, katerih "
+                        "vrednosti se ne seštevajo. "
+                    )
+                elif view_title == "Vodilne destinacije":
+                    st.caption(
+                        "**Opomba:** Delež posamezne občine znotraj opazovane vodilne destinacije (%) je prikazan "
+                        "za kazalnike, kjer se vrednosti seštevajo. Primerjalni indeks vrednosti kazalnika "
+                        "posamezne občine v primerjavi z vrednostjo enakega kazalnika na ravni opazovane vodilne "
+                        "destinacije pa je prikazan za kompleksnejše oz. izračunane kazalnike, katerih vrednosti "
+                        "se ne seštevajo. "
+                    )
+                elif view_title == "Makrodestinacije":
+                    st.caption(
+                        "**Opomba:** Delež posamezne občine znotraj opazovane makro destinacije (%) je prikazan "
+                        "za kazalnike, kjer se vrednosti seštevajo. Primerjalni indeks vrednosti kazalnika "
+                        "posamezne občine v primerjavi z vrednostjo enakega kazalnika na ravni opazovane makro "
+                        "destinacije pa je prikazan za kompleksnejše oz. izračunane kazalnike, katerih vrednosti "
+                        "se ne seštevajo. "
+                    )
+                elif view_title == "Perspektivne destinacije":
+                    st.caption(
+                        "**Opomba:** Delež posamezne občine znotraj opazovane perspektivne destinacije (%) je "
+                        "prikazan za kazalnike, kjer se vrednosti seštevajo. Primerjalni indeks vrednosti "
+                        "kazalnika posamezne občine v primerjavi z vrednostjo enakega kazalnika na ravni "
+                        "opazovane perspektivne destinacije pa je prikazan za kompleksnejše oz. izračunane "
+                        "kazalnike, katerih vrednosti se ne seštevajo. "
+                    )
+
+    if selected_region != "Vsa območja":
+        render_region_top_bottom_and_ai(selected_region, group_col, group_sections)
+
+
+def render_market_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:
+    st.caption(f"**Pogled:** {view_title}")
+    st.subheader("Struktura prenočitev po trgih")
+
+    years = [2024, 2025]
+    selected_year = st.selectbox("Leto", years, index=len(years) - 1, key=f"trgi_year_{group_col}")
+
+    if not ctx.market_cols:
+        st.warning(f"V Excelu ne najdem stolpcev, ki se začnejo z: '{MARKET_PREFIX}'.")
+        return
+
+    df_groups = ctx.df[ctx.df[group_col].notna()].copy()
+    numeric_df = df_groups.copy()
+
+    base_weight_col_template = "Prenočitve turistov SKUPAJ - 2024"
+    base_weight_col = col_for_year(base_weight_col_template, selected_year)
+
+    market_cols_year, market_labels_year = get_market_cols_for_year(ctx.df, selected_year)
+    required_cols = [base_weight_col] + market_cols_year
+    missing_cols = [column for column in required_cols if column not in numeric_df.columns]
+    if missing_cols:
+        st.warning("Manjkajo stolpci za izbrano leto: " + ", ".join(missing_cols))
+        return
+
+    for column in required_cols:
+        numeric_df[column] = parse_numeric(numeric_df[column])
+
+    groups = sorted(numeric_df[group_col].dropna().unique().tolist())
+    if not groups:
+        st.warning("Ne najdem nobenih območij za izbran pogled.")
+        return
+
+    selected_group = st.selectbox(f"Izberi območje ({group_col})", groups, index=0, key=f"trgi_sel_{group_col}")
+    mode = st.radio(
+        "Prikaz",
+        ["Celotno območje", "Občine znotraj območja"],
+        horizontal=True,
+        key=f"trgi_mode_{group_col}",
+    )
+
+    subset = numeric_df[numeric_df[group_col] == selected_group].copy()
+    if subset.empty:
+        st.info("Ni podatkov za izbrano območje.")
+        return
+
+    total_weights = subset[base_weight_col].astype(float)
+    denominator = float(np.nansum(total_weights.values)) if base_weight_col in subset.columns else np.nan
+    if not denominator or np.isnan(denominator) or denominator <= 0:
+        st.warning("Manjkajo prenočitve SKUPAJ (utež) ali so 0, zato strukture ne morem izračunati.")
+        return
+
+    values = {}
+    for column, label in zip(market_cols_year, market_labels_year):
+        series = subset[column].astype(float)
+        mask = (~series.isna()) & (~total_weights.isna()) & (total_weights > 0)
+        if mask.any():
+            values[label] = float(np.nansum((series[mask] * total_weights[mask]).values) / np.nansum(total_weights[mask].values))
+        else:
+            values[label] = np.nan
+
+    structure_df = pd.DataFrame({"Trg": list(values.keys()), "Delež": list(values.values())}).dropna()
+    total_share = float(structure_df["Delež"].sum()) if not structure_df.empty else 0.0
+    structure_df["Delež_norm"] = structure_df["Delež"] / total_share if total_share > 0 else np.nan
+
+    if mode == "Celotno območje":
+        st.markdown(f"### {selected_group}")
+        chart_col, table_col = st.columns([1.2, 1])
+        with chart_col:
+            st.markdown("**Tortni prikaz (normalizirano na 100%)**")
+            pie_df = structure_df.sort_values("Delež_norm", ascending=False)
+            pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
+            fig = px.pie(
+                pie_df,
+                names="Trg_short",
+                values="Delež_norm",
+                color="Trg",
+                color_discrete_map=MARKET_COLOR_MAP,
+                hole=0.4,
+            )
+            fig.update_traces(
+                textposition="inside",
+                textinfo="percent+label",
+                hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
+                customdata=pie_df[["Trg"]].values,
+            )
+            fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=True, legend_title_text="Trgi")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with table_col:
+            st.markdown("**Tabela**")
+            table = structure_df.copy()
+            table["Delež (%)"] = (table["Delež_norm"] * 100).round(1)
+            table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
+            st.dataframe(table, use_container_width=True, hide_index=True)
+
+        st.caption(
+            "Opomba: deleži so izračunani uteženo glede na celotno število prenočitev "
+            "in nato normalizirani na 100% (zaradi zaokroževanja/manjkajočih trgov)."
+        )
+        return
+
+    st.markdown(f"### Občine znotraj območja: {selected_group}")
+    municipality_df = subset[["Občine", base_weight_col] + market_cols_year].copy().rename(columns={"Občine": "Občina"})
+    chosen_muni = st.selectbox(
+        "Izberi občino",
+        municipality_df["Občina"].dropna().astype(str).tolist(),
+        index=0,
+        key=f"trgi_muni_{group_col}",
+    )
+
+    municipality_row = municipality_df[municipality_df["Občina"] == chosen_muni].iloc[0]
+    municipality_values = [
+        {"Trg": label, "Delež": float(municipality_row[column]) if pd.notna(municipality_row[column]) else np.nan}
+        for column, label in zip(market_cols_year, market_labels_year)
+    ]
+    municipality_structure = pd.DataFrame(municipality_values).dropna()
+    municipality_total = float(municipality_structure["Delež"].sum()) if not municipality_structure.empty else 0.0
+    municipality_structure["Delež_norm"] = municipality_structure["Delež"] / municipality_total if municipality_total > 0 else np.nan
+
+    chart_col, table_col = st.columns([1.2, 1])
+    with chart_col:
+        st.markdown(f"**{chosen_muni} – tortni prikaz (normalizirano na 100%)**")
+        pie_df = municipality_structure.sort_values("Delež_norm", ascending=False)
+        pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
+        fig = px.pie(
+            pie_df,
+            names="Trg_short",
+            values="Delež_norm",
+            color="Trg",
+            color_discrete_map=MARKET_COLOR_MAP,
+            hole=0.4,
+        )
+        fig.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+            hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
+            customdata=pie_df[["Trg"]].values,
+        )
+        fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=True, legend_title_text="Trgi")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with table_col:
+        st.markdown("**Tabela**")
+        table = municipality_structure.copy()
+        table["Delež (%)"] = (table["Delež_norm"] * 100).round(1)
+        table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
+        st.dataframe(table, use_container_width=True, hide_index=True)
+
+    st.markdown("**Tabela občin (povzetek)**")
+
+    def top_market(row: pd.Series) -> tuple[str, float]:
+        pairs = [
+            (label, row[column])
+            for column, label in zip(market_cols_year, market_labels_year)
+            if pd.notna(row[column])
+        ]
+        if not pairs:
+            return "—", np.nan
+        return max(pairs, key=lambda pair: pair[1])
+
+    tops = municipality_df.copy()
+    tops["Top trg"] = tops.apply(lambda row: top_market(row)[0], axis=1)
+    tops["Top trg delež (%)"] = tops.apply(
+        lambda row: top_market(row)[1] * 100 if pd.notna(top_market(row)[1]) else np.nan,
+        axis=1,
+    ).round(1)
+    tops_view = tops[["Občina", base_weight_col, "Top trg", "Top trg delež (%)"]].copy()
+    tops_view = tops_view.sort_values(base_weight_col, ascending=False, na_position="last")
+    st.dataframe(tops_view, use_container_width=True, hide_index=True)

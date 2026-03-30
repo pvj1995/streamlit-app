@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import json
+import time
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
+
+import streamlit as st
+
+from tourism_dashboard.config import AI_CACHE_CONNECTION_NAME_DEFAULT, AI_CACHE_TABLE_NAME
+from tourism_dashboard.helpers import get_secret_value, sql
+
+
+if TYPE_CHECKING:
+    import requests
+else:
+    try:
+        import requests
+    except Exception:
+        requests = None
+
+
+def get_ai_cache_connection() -> Tuple[Optional[Any], str]:
+    connection_name: str = str(
+        get_secret_value("AI_CACHE_CONNECTION_NAME", AI_CACHE_CONNECTION_NAME_DEFAULT)
+    )
+    connection_factory = cast(Any, getattr(st, "connection", None))
+    if connection_factory is None:
+        return None, connection_name
+    try:
+        connection = connection_factory(connection_name, type="sql")
+    except Exception:
+        connection = None
+    return connection, connection_name
+
+
+def ensure_ai_cache_table(conn: Any) -> bool:
+    try:
+        with conn.session as session:
+            session.execute(
+                sql(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {AI_CACHE_TABLE_NAME} (
+                        cache_key TEXT PRIMARY KEY,
+                        payload_hash TEXT NOT NULL,
+                        region TEXT NOT NULL,
+                        group_name TEXT NOT NULL,
+                        response_text TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+            )
+            session.commit()
+        return True
+    except Exception:
+        return False
+
+
+def get_cached_ai_commentary(cache_key: str) -> Optional[Dict[str, Any]]:
+    conn, _ = get_ai_cache_connection()
+    if conn is None or not ensure_ai_cache_table(conn):
+        return None
+
+    try:
+        df_cached = conn.query(
+            f"""
+            SELECT region, group_name, response_text, model, updated_at
+            FROM {AI_CACHE_TABLE_NAME}
+            WHERE cache_key = :cache_key
+            LIMIT 1
+            """,
+            params={"cache_key": cache_key},
+            ttl=0,
+        )
+    except Exception:
+        return None
+
+    if df_cached is None or df_cached.empty:
+        return None
+
+    row = df_cached.iloc[0]
+    return {
+        "region": row.get("region"),
+        "group_name": row.get("group_name"),
+        "text": row.get("response_text", ""),
+        "source": "db_cache",
+        "model": row.get("model"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def store_cached_ai_commentary(
+    cache_key: str,
+    *,
+    payload_hash: str,
+    region_name: str,
+    group_name: str,
+    text: str,
+    model: str,
+) -> None:
+    conn, _ = get_ai_cache_connection()
+    if conn is None or not ensure_ai_cache_table(conn):
+        return
+
+    try:
+        with conn.session as session:
+            session.execute(
+                sql(
+                    f"""
+                    INSERT INTO {AI_CACHE_TABLE_NAME}
+                        (cache_key, payload_hash, region, group_name, response_text, model, updated_at)
+                    VALUES
+                        (:cache_key, :payload_hash, :region, :group_name, :response_text, :model, NOW())
+                    ON CONFLICT (cache_key)
+                    DO UPDATE SET
+                        payload_hash = EXCLUDED.payload_hash,
+                        region = EXCLUDED.region,
+                        group_name = EXCLUDED.group_name,
+                        response_text = EXCLUDED.response_text,
+                        model = EXCLUDED.model,
+                        updated_at = NOW()
+                    """
+                ),
+                {
+                    "cache_key": cache_key,
+                    "payload_hash": payload_hash,
+                    "region": region_name,
+                    "group_name": group_name,
+                    "response_text": text,
+                    "model": model,
+                },
+            )
+            session.commit()
+    except Exception:
+        return
+
+
+def rows_to_prompt_lines(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return "- Ni podatkov."
+
+    lines = []
+    for row in rows[:5]:
+        indicator = row.get("Kazalnik", "—")
+        direction = row.get("Smer kazalnika", "—")
+        region_val = row.get("Vrednost območja", "—")
+        baseline_val = row.get("Osnova (Slovenija)", "—")
+        comparison_method = row.get("Metoda primerjave", "—")
+        aligned_delta = row.get("Odstopanje glede na smer", row.get("Odstopanje od osnove", "—"))
+        raw_delta = row.get("Primerjalni odmik", row.get("Odstopanje od osnove", "—"))
+        lines.append(
+            f"- {indicator} | smer: {direction} | območje: {region_val} | "
+            f"Slovenija: {baseline_val} | primerjava: {comparison_method} | "
+            f"odstopanje glede na smer: {aligned_delta} | primerjalni odmik: {raw_delta}"
+        )
+    return "\n".join(lines)
+
+
+def grouped_rows_to_prompt_text(group_sections: List[Dict[str, Any]]) -> str:
+    if not group_sections:
+        return "Ni podatkov po skupinah."
+
+    blocks = []
+    for section in group_sections:
+        group_name = section.get("group", "Neznana skupina")
+        top_rows = section.get("top_rows", [])
+        bottom_rows = section.get("bottom_rows", [])
+        blocks.append(
+            f"{group_name}\n"
+            f"TOP:\n{rows_to_prompt_lines(top_rows)}\n"
+            f"BOTTOM:\n{rows_to_prompt_lines(bottom_rows)}"
+        )
+    return "\n\n".join(blocks)
+
+
+def fallback_region_commentary(region_name: str, group_sections: List[Dict[str, Any]]) -> str:
+    summary_parts = []
+    for section in group_sections:
+        group_name = section.get("group", "Neznana skupina")
+        top_names = ", ".join(row.get("Kazalnik", "—") for row in section.get("top_rows", [])[:2]) or "ni podatkov"
+        bottom_names = ", ".join(row.get("Kazalnik", "—") for row in section.get("bottom_rows", [])[:2]) or "ni podatkov"
+        summary_parts.append(f"{group_name}: prednosti {top_names}; tveganja {bottom_names}")
+
+    summary_text = " | ".join(summary_parts) if summary_parts else "Ni dovolj podatkov za skupinsko primerjavo."
+    return (
+        f"**Povzetek za območje {region_name}:** {summary_text}. "
+        f"Primerjava je glede na slovensko osnovo.\n\n"
+        f"**Priporočila:**\n"
+        f"1. Ukrepe določite ločeno po skupinah kazalnikov, ne samo na ravni celotnega območja.\n"
+        f"2. Pri najslabših kazalnikih v vsaki skupini določite 2-3 ciljne ukrepe z nosilci in roki.\n"
+        f"3. Spremljajte napredek po skupinah in preverjajte, ali se slabši kazalniki približujejo slovenski osnovi."
+    )
+
+
+def extract_response_text(resp_json: Dict[str, Any]) -> Optional[str]:
+    direct = resp_json.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    for item in resp_json.get("output", []):
+        for content in item.get("content", []):
+            text = content.get("text")
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+    return None
+
+
+def extract_openai_error_fields(resp: Any) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    try:
+        data = resp.json()
+    except Exception:
+        return None, None, None
+
+    err = data.get("error", {}) if isinstance(data, dict) else {}
+    if not isinstance(err, dict):
+        return None, None, None
+
+    message = err.get("message")
+    err_type = err.get("type")
+    code = err.get("code")
+    return (
+        str(message).strip() if message is not None else None,
+        str(err_type).strip() if err_type is not None else None,
+        str(code).strip() if code is not None else None,
+    )
+
+
+def format_openai_http_error(resp: Any) -> str:
+    status = resp.status_code
+    message, err_type, code = extract_openai_error_fields(resp)
+    parts = [f"AI klic ni uspel (HTTP {status})"]
+    if code:
+        parts.append(f"koda: {code}")
+    if err_type:
+        parts.append(f"tip: {err_type}")
+    if message:
+        parts.append(f"podrobnosti: {message}")
+    return ". ".join(parts) + "."
+
+
+def should_retry_openai_call(status_code: int, err_type: str | None, err_code: str | None) -> bool:
+    if status_code in {500, 502, 503, 504}:
+        return True
+    if status_code == 429:
+        if err_code == "insufficient_quota" or err_type == "insufficient_quota":
+            return False
+        return True
+    return False
+
+
+def compute_retry_delay_seconds(resp: Any, attempt_index: int) -> float:
+    retry_after = resp.headers.get("Retry-After")
+    if retry_after:
+        try:
+            seconds = float(retry_after)
+            if seconds > 0:
+                return min(seconds, 20.0)
+        except Exception:
+            pass
+    return min(1.5 * (2 ** attempt_index), 20.0)
+
+
+def generate_region_ai_commentary(
+    region_name: str,
+    group_sections: List[Dict[str, Any]],
+) -> Tuple[str, str, Optional[str]]:
+    api_key = get_secret_value("OPENAI_API_KEY")
+    if not api_key or requests is None:
+        return fallback_region_commentary(region_name, group_sections), "fallback", None
+
+    requests_module = cast(Any, requests)
+    model = get_secret_value("OPENAI_MODEL", "gpt-5.4")
+    system_prompt = (
+        "Si analitik regionalnega razvoja turizma. Uporabi samo podane "
+        "kazalnike in podaj kratko, praktično razlago ter priporočila."
+    )
+    user_prompt = (
+        f"Območje: {region_name}\n\n"
+        f"Top/Bottom po skupinah kazalnikov:\n{grouped_rows_to_prompt_text(group_sections)}\n\n"
+        "Naloga:\n"
+        "1) Napiši kratek celosten komentar (5-7 stavkov), ki povzema stanje po vseh štirih skupinah kazalnikov.\n"
+        "2) Jasno loči, katere so glavne prednosti in katera tveganja izstopajo po posameznih skupinah.\n"
+        "3) Dodaj 4 konkretna priporočila za izboljšanje, pri čemer naj priporočila pokrijejo več skupin kazalnikov.\n"
+        "4) Uporabi samo podane podatke, brez izmišljenih razlag ali številk.\n"
+        "5) Piši v slovenščini, profesionalno, jedrnato."
+    )
+
+    payload = {
+        "model": model,
+        "temperature": 0.3,
+        "max_output_tokens": 2000,
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_prompt}],
+            },
+        ],
+    }
+
+    try:
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            resp = requests_module.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps(payload),
+                timeout=35,
+            )
+
+            if resp.status_code < 400:
+                text = extract_response_text(resp.json())
+                if not text:
+                    return fallback_region_commentary(region_name, group_sections), "fallback", "AI odgovor je bil prazen."
+                return text, "ai", None
+
+            message, err_type, err_code = extract_openai_error_fields(resp)
+            if attempt < max_attempts - 1 and should_retry_openai_call(resp.status_code, err_type, err_code):
+                time.sleep(compute_retry_delay_seconds(resp, attempt))
+                continue
+
+            if resp.status_code == 429 and (err_code == "insufficient_quota" or err_type == "insufficient_quota"):
+                err = (
+                    "AI klic ni uspel (HTTP 429). Kvota za OPENAI_API_KEY je porabljena "
+                    "(insufficient_quota). Preveri billing/kvote na platform.openai.com."
+                )
+            else:
+                err = format_openai_http_error(resp)
+            return fallback_region_commentary(region_name, group_sections), "fallback", err
+    except Exception as exc:
+        return fallback_region_commentary(region_name, group_sections), "fallback", str(exc)
+
+    return fallback_region_commentary(region_name, group_sections), "fallback", "AI klic se ni izvedel."
