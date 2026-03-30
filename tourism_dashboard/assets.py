@@ -89,6 +89,19 @@ def image_path_to_data_uri(path_str: str) -> str | None:
 
 
 @st.cache_data(show_spinner=False)
+def get_image_dimensions(path_str: str) -> tuple[int, int] | None:
+    source = Path(path_str)
+    if not source.exists() or Image is None:
+        return None
+
+    try:
+        with Image.open(source) as img:
+            return int(img.width), int(img.height)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
 def load_title_slideshow_images() -> list[str]:
     title_dir = get_title_slides_dir()
     if not title_dir.exists() or not title_dir.is_dir():
@@ -432,52 +445,92 @@ def render_page_header():
 def render_ai_section_header():
     ai_banner_path = get_ai_banner_path()
     ai_banner_uri = image_path_to_data_uri(str(ai_banner_path)) if ai_banner_path is not None else None
+    ai_banner_dimensions = get_image_dimensions(str(ai_banner_path)) if ai_banner_path is not None else None
 
     if ai_banner_uri:
+        ai_banner_ratio = (
+            f"{ai_banner_dimensions[0]} / {ai_banner_dimensions[1]}"
+            if ai_banner_dimensions is not None
+            else "1920 / 359"
+        )
         st.markdown(
             f"""
-            <div style="
-                position: relative;
-                overflow: hidden;
-                margin: 0.15rem 0 0.8rem 0;
-                border-radius: 18px;
-                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-            ">
-                <img
-                    src="{ai_banner_uri}"
-                    alt="AI banner"
-                    style="
-                        display: block;
-                        width: 100%;
-                        height: auto;
-                    "
-                />
-                <div style="
+            <style>
+                .ai-banner-header {{
+                    position: relative;
+                    overflow: hidden;
+                    width: 100%;
+                    aspect-ratio: {ai_banner_ratio};
+                    margin: 0.15rem 0 0.8rem 0;
+                    border-radius: 18px;
+                    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+                    background: linear-gradient(90deg, #dbe4ef 0%, #edf2f8 55%, #f7fafc 100%);
+                }}
+                .ai-banner-image {{
+                    position: absolute;
+                    inset: 0;
+                    width: 100%;
+                    height: 100%;
+                    object-fit: cover;
+                    object-position: center center;
+                    display: block;
+                }}
+                .ai-banner-overlay {{
                     position: absolute;
                     inset: 0;
                     display: flex;
                     align-items: center;
-                    padding: 0.95rem 1.1rem;
+                    padding: clamp(0.8rem, 1.5vw, 1.1rem);
                     pointer-events: none;
-                ">
-                    <div style="
-                        margin-left: clamp(8.5rem, 12vw, 16rem);
-                        max-width: min(38rem, 56%);
-                        padding: 0.85rem 1.05rem;
-                        border-radius: 14px;
-                        background: rgba(15, 23, 42, 0.40);
-                        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
-                        backdrop-filter: blur(1.5px);
-                        -webkit-backdrop-filter: blur(1.5px);
-                    ">
-                        <div style="
-                            font-family: 'Source Sans', sans-serif;
-                            font-size: clamp(1.2rem, 2vw, 2rem);
-                            font-weight: 600;
-                            line-height: 1.2;
-                            color: #ffffff;
-                            text-shadow: 0 2px 10px rgba(15, 23, 42, 0.32);
-                        ">
+                }}
+                .ai-banner-bubble {{
+                    margin-left: clamp(9rem, 20vw, 19rem);
+                    max-width: min(40rem, 58%);
+                    padding: 0.85rem 1.05rem;
+                    border-radius: 14px;
+                    background: rgba(15, 23, 42, 0.24);
+                    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
+                    backdrop-filter: blur(1px);
+                    -webkit-backdrop-filter: blur(1px);
+                }}
+                .ai-banner-title {{
+                    font-family: "Source Sans Pro", sans-serif;
+                    font-size: clamp(1.45rem, 2.45vw, 2.35rem);
+                    font-weight: 600;
+                    line-height: 1.2;
+                    color: #ffffff;
+                    text-shadow: 0 2px 10px rgba(15, 23, 42, 0.32);
+                }}
+                @media (max-width: 900px) {{
+                    .ai-banner-bubble {{
+                        margin-left: clamp(6.2rem, 17vw, 11rem);
+                        max-width: min(28rem, 62%);
+                        padding: 0.75rem 0.9rem;
+                    }}
+                    .ai-banner-title {{
+                        font-size: clamp(1.15rem, 2.9vw, 1.8rem);
+                    }}
+                }}
+                @media (max-width: 640px) {{
+                    .ai-banner-bubble {{
+                        margin-left: clamp(4.5rem, 14vw, 7rem);
+                        max-width: 72%;
+                        padding: 0.65rem 0.8rem;
+                    }}
+                    .ai-banner-title {{
+                        font-size: clamp(1rem, 3.4vw, 1.4rem);
+                    }}
+                }}
+            </style>
+            <div class="ai-banner-header">
+                <img
+                    class="ai-banner-image"
+                    src="{ai_banner_uri}"
+                    alt="AI banner"
+                />
+                <div class="ai-banner-overlay">
+                    <div class="ai-banner-bubble">
+                        <div class="ai-banner-title">
                             AI komentar in priporočila za območje
                         </div>
                     </div>
