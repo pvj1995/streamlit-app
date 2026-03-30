@@ -5,15 +5,25 @@
 # - Dodano: pri posamezni regiji prikaz "delež Slovenije" za izbran indikator
 
 import json
+import base64
 import re
 import hashlib
 import time
+import tempfile
+import textwrap
 from pathlib import Path
 import hmac
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except Exception:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
 
 try:
     import folium
@@ -34,6 +44,11 @@ try:
     from sqlalchemy import text as sql_text
 except Exception:
     sql_text = None
+
+try:
+    from streamlit_image_select import image_select
+except Exception:
+    image_select = None
 
 
 # def require_password():
@@ -70,6 +85,13 @@ GROUP_COLOR_EMOJI = {
     "Okoljski kazalniki": "🟩",
     "Ekonomski nastanitveni in tržni turistični kazalniki": "🟥",
     "Ekonomsko poslovni kazalniki turistične dejavnosti": "🟪",
+}
+GROUP_BUTTON_IMAGE_FILES = {
+    "__all__": "Button - Vsi kazalniki.png",
+    "Družbeni kazalniki": "Button - Družbeni kazalniki.png",
+    "Okoljski kazalniki": "Button - Okoljski kazalniki.png",
+    "Ekonomski nastanitveni in tržni turistični kazalniki": "Button - Ekonomski nastanitveni in tržni turistični kazalniki.png",
+    "Ekonomsko poslovni kazalniki turistične dejavnosti": "Button - Ekonomsko poslovni kazalniki turistične dejavnosti.png",
 }
 TOP_BOTTOM_GROUP_LIMITS = {
     "Družbeni kazalniki": 4,
@@ -836,6 +858,155 @@ def load_excel(path_or_buffer) -> pd.DataFrame:
     df1 = raw.iloc[1:].copy()
     df1.columns = cols
     return df1
+
+@st.cache_data(show_spinner=False)
+def image_path_to_data_uri(path_str: str) -> str | None:
+    source = Path(path_str)
+    if not source.exists():
+        return None
+    suffix = source.suffix.lower()
+    mime = "image/png"
+    if suffix in {".jpg", ".jpeg"}:
+        mime = "image/jpeg"
+    elif suffix == ".webp":
+        mime = "image/webp"
+    raw = base64.b64encode(source.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{raw}"
+
+@st.cache_data(show_spinner=False)
+def load_title_slideshow_images() -> list[str]:
+    title_dir = Path(__file__).parent / "Title"
+    if not title_dir.exists() or not title_dir.is_dir():
+        fallback = image_path_to_data_uri(str(Path(__file__).parent / "Title.jpg"))
+        return [fallback] if fallback else []
+
+    def natural_sort_key(path: Path):
+        parts = re.split(r"(\d+)", path.name.lower())
+        return [int(part) if part.isdigit() else part for part in parts]
+
+    image_paths = sorted(
+        [p for p in title_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}],
+        key=natural_sort_key,
+    )
+    image_uris = [image_path_to_data_uri(str(path)) for path in image_paths]
+    image_uris = [uri for uri in image_uris if uri]
+
+    if image_uris:
+        return image_uris
+
+    fallback = image_path_to_data_uri(str(Path(__file__).parent / "Title.jpg"))
+    return [fallback] if fallback else []
+
+def load_button_font(font_size: int):
+    if ImageFont is None:
+        return None
+    try:
+        return ImageFont.truetype("DejaVuSans-Bold.ttf", font_size)
+    except Exception:
+        try:
+            return ImageFont.truetype("Arial Bold.ttf", font_size)
+        except Exception:
+            return ImageFont.load_default()
+
+@st.cache_data(show_spinner=False)
+def prepare_group_button_image(
+    path_str: str,
+    label: str = "",
+    canvas_px: int = 360,
+    inset_ratio: float = 0.78,
+) -> str | None:
+    source = Path(path_str)
+    if not source.exists():
+        return None
+    if Image is None or ImageDraw is None:
+        return str(source)
+
+    try:
+        render_version = "v4"
+        signature = f"{render_version}|{source.resolve()}|{source.stat().st_mtime_ns}|{label}|{canvas_px}|{inset_ratio}"
+        cache_name = hashlib.md5(signature.encode("utf-8")).hexdigest()[:16]
+        cache_dir = Path(tempfile.gettempdir()) / "streamlit_button_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        out_path = cache_dir / f"{source.stem}_{cache_name}.png"
+        if out_path.exists():
+            return str(out_path)
+
+        with Image.open(source) as img:
+            img = img.convert("RGBA")
+            side = max(120, int(canvas_px))
+            has_label = bool(label.strip())
+            label_band_height = int(side * 0.31) if has_label else 0
+            image_area_height = side - label_band_height - int(side * 0.04)
+            fit_width = max(1, int(side * inset_ratio))
+            fit_height = max(1, int(image_area_height * 0.88))
+            scale = min(fit_width / max(1, img.width), fit_height / max(1, img.height))
+            new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+            resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+            resized = img.resize(new_size, resampling)
+
+            # Square canvas prevents cropping when the component enforces square tiles.
+            square = Image.new("RGBA", (side, side), (248, 250, 252, 255))
+            offset = ((side - new_size[0]) // 2, max(8, (image_area_height - new_size[1]) // 2))
+            square.paste(resized, offset, resized)
+
+            if has_label:
+                band_top = side - label_band_height
+                draw = ImageDraw.Draw(square)
+                draw.rectangle([(0, band_top), (side, side)], fill=(255, 255, 255, 245))
+                text_color = (28, 37, 54, 255)
+                best_text = label
+                best_font = load_button_font(max(14, int(side * 0.06)))
+                best_overflow = None
+                spacing = 4
+                max_text_width = side * 0.88
+                band_inner_top = band_top + int(side * 0.025)
+                band_inner_bottom = side - int(side * 0.04)
+                max_text_height = max(1, band_inner_bottom - band_inner_top)
+
+                manual_multiline = "\n" in label
+
+                for font_size in range(max(18, int(side * 0.074)), 11, -1):
+                    font = load_button_font(font_size)
+                    if font is None:
+                        continue
+                    candidate_texts = [label] if manual_multiline else [textwrap.fill(label, width=wrap_width) for wrap_width in range(10, 22)]
+                    for wrapped in candidate_texts:
+                        bbox = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=spacing)
+                        text_width = bbox[2] - bbox[0]
+                        text_height = bbox[3] - bbox[1]
+                        overflow = max(text_width - max_text_width, 0) + max(text_height - max_text_height, 0)
+
+                        if best_overflow is None or overflow < best_overflow:
+                            best_overflow = overflow
+                            best_text = wrapped
+                            best_font = font
+
+                        if overflow <= 0:
+                            best_text = wrapped
+                            best_font = font
+                            best_overflow = overflow
+                            break
+                    if best_overflow == 0:
+                        break
+
+                text_bbox = draw.multiline_textbbox((0, 0), best_text, font=best_font, align="center", spacing=spacing)
+                text_width = text_bbox[2] - text_bbox[0]
+                text_height = text_bbox[3] - text_bbox[1]
+                text_x = (side - text_width) / 2
+                text_y = band_inner_top + max((max_text_height - text_height) / 2, 0) - text_bbox[1]
+                draw.multiline_text(
+                    (text_x, text_y),
+                    best_text,
+                    fill=text_color,
+                    font=best_font,
+                    align="center",
+                    spacing=spacing,
+                )
+
+            square.save(out_path, format="PNG", optimize=True)
+        return str(out_path)
+    except Exception:
+        return str(source)
 
 def try_load_geojson(path: Path):
     if not path.exists():
@@ -1741,66 +1912,194 @@ def load_geojson_from_upload_or_file(uploaded, default_path: Path):
 # ---------------------------
 st.set_page_config(page_title="Upravljanje turističnih destinacij Slovenije© \n Ključni podatki in kazalniki", layout="wide", initial_sidebar_state="collapsed")
 
-col_left, col_center, col_right = st.columns([1, 6, 3])
-
-with col_left:
-    st.image("top _left_logo.jpg")
-
-with col_center:
-    ""
-
-with col_right:
-    ""
-
-st.markdown(
-    """
+title_slideshow_images = load_title_slideshow_images()
+title_slideshow_step_seconds = 6
+title_slideshow_spacer = title_slideshow_images[0] if title_slideshow_images else ""
+title_slideshow_count = max(1, len(title_slideshow_images))
+title_slideshow_total_seconds = title_slideshow_count * title_slideshow_step_seconds
+title_slide_visible_pct = (title_slideshow_step_seconds * 0.78 / title_slideshow_total_seconds) * 100
+title_slide_fade_end_pct = (title_slideshow_step_seconds / title_slideshow_total_seconds) * 100
+title_slide_animation_css = (
+    "animation: none; opacity: 1;"
+    if len(title_slideshow_images) <= 1
+    else f"animation: titleSlideFade {title_slideshow_total_seconds}s linear infinite; animation-fill-mode: both;"
+)
+title_slideshow_html = "\n".join(
+    f'<img class="title-slide" src="{image_uri}" alt="Naslovna slika {idx + 1}" style="animation-delay: {-idx * title_slideshow_step_seconds}s;" />'
+    for idx, image_uri in enumerate(title_slideshow_images)
+)
+st.html(
+    f"""
     <style>
-    .app-title {
+    body {{
+        margin: 0;
+        font-family: "Source Sans Pro", sans-serif;
+    }}
+    .title-panel {{
+        position: relative;
+        overflow: hidden;
+        border-radius: 24px;
+        margin: 0 0 8px 0;
+        box-shadow: 0 16px 36px rgba(17, 24, 39, 0.10);
+        color: #1f2937;
+        background: #eef2f7;
+    }}
+    .title-panel-media {{
+        position: relative;
+        width: 100%;
+    }}
+    .title-slide-spacer {{
+        display: block;
+        width: 100%;
+        height: auto;
+        visibility: hidden;
+    }}
+    .title-slide-layer {{
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+    }}
+    .title-slide {{
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        opacity: 0;
+        {title_slide_animation_css}
+    }}
+    .title-slide:first-child {{
+        opacity: 1;
+    }}
+    @keyframes titleSlideFade {{
+        0% {{ opacity: 1; }}
+        {title_slide_visible_pct:.4f}% {{ opacity: 1; }}
+        {title_slide_fade_end_pct:.4f}% {{ opacity: 0; }}
+        100% {{ opacity: 0; }}
+    }}
+    .title-panel-overlay {{
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+            180deg,
+            rgba(10, 18, 32, 0.04) 0%,
+            rgba(10, 18, 32, 0.10) 42%,
+            rgba(10, 18, 32, 0.42) 100%
+        );
+    }}
+    .title-panel-content {{
+        position: absolute;
+        left: 28px;
+        right: auto;
+        bottom: 28px;
+        top: auto;
+        width: min(74%, 1200px);
+        padding: 22px 26px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        box-sizing: border-box;
+        background: linear-gradient(
+            180deg,
+            rgba(15, 23, 42, 0.08) 0%,
+            rgba(15, 23, 42, 0.18) 100%
+        );
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 20px;
+        backdrop-filter: blur(2px);
+    }}
+    .app-kicker {{
+        font-size: 26px;
+        font-style: italic;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        line-height: 1.05;
+        margin-bottom: 10px;
+        color: rgba(255, 255, 255, 0.98);
+        text-shadow: 0 2px 12px rgba(15, 23, 42, 0.30);
+    }}
+    .app-title {{
         font-size: 42px;
         font-weight: 800;
         line-height: 1.1;
         margin-bottom: 4px;
-    }
-    .app-title .copyright {
+        color: #ffffff;
+        text-shadow: 0 2px 14px rgba(15, 23, 42, 0.35);
+    }}
+    .app-title .copyright {{
         font-weight: 400;
         font-size: 0.6em;
         vertical-align: super;
-        }
-    .app-subtitle {
+    }}
+    .app-subtitle {{
         font-size: 34px;
         font-style: italic;
         font-weight: 500;
-        color: #6b6b6b;
+        color: rgba(255, 255, 255, 0.96);
         margin-bottom: 8px;
         line-height: 1.1;
-    }
-    .app-description {
+        text-shadow: 0 2px 12px rgba(15, 23, 42, 0.30);
+    }}
+    .app-description {{
         font-size: 16px;
-        color: #6b6b6b;
+        font-style: italic;
+        color: rgba(255, 255, 255, 0.92);
         line-height: 1.4;
         max-width: 1200px;
-    }
+        text-shadow: 0 2px 10px rgba(15, 23, 42, 0.28);
+    }}
+    @media (max-width: 900px) {{
+        .title-panel {{
+            border-radius: 18px;
+        }}
+        .title-panel-content {{
+            left: 16px;
+            right: 16px;
+            bottom: 16px;
+            top: auto;
+            width: auto;
+            padding: 16px 16px;
+            border-radius: 16px;
+        }}
+        .app-kicker {{
+            font-size: 20px;
+            margin-bottom: 8px;
+        }}
+        .app-title {{
+            font-size: 30px;
+        }}
+        .app-subtitle {{
+            font-size: 24px;
+        }}
+        .app-description {{
+            font-size: 14px;
+        }}
+    }}
     </style>
-
-    <div class="app-title">
-        Upravljanje turističnih destinacij Slovenije  <span class ="copyright">©</span>
+    <div class="title-panel">
+        <div class="title-panel-media">
+            <img class="title-slide-spacer" src="{title_slideshow_spacer}" alt="" />
+            <div class="title-slide-layer">
+                {title_slideshow_html}
+            </div>
+            <div class="title-panel-overlay"></div>
+            <div class="title-panel-content">
+                <div class="app-kicker">
+                    Interaktivna aplikacija
+                </div>
+                <div class="app-title">
+                    Upravljanje turističnih destinacij Slovenije <span class="copyright">©</span>
+                </div>
+                <div class="app-subtitle">
+                    Ključni podatki in kazalniki stanja, stopnje razvoja, vpliva in učinkovitosti upravljanja turizma
+                </div>
+                <div class="app-description">
+                    Preko 100 podatkov in strukturiranih tržnih, poslovnih, ekonomskih, družbenih in okoljskih kazalnikov za vsako od 5 ravni ožje in širše zaokroženih turističnih območij: Občine, Vodilne turistične destinacije, Perspektivne turistične destinacije, Turistične regije, Makro destinacije in nacionalne ravni slovenskega turizma. Medsebojne primerjave in konkurenčno uvrščanje posameznih območij, primerjave s kazalniki na ravni Slovenije. Diagnostika stanja in generiranje priporočil  o razvoju in delovanju turizma na ravni destinacij. Stalna nadgradnja z aktualnimi podatki, novimi kazalniki in prikazi, tudi s pomočjo umetne inteligence.
+                </div>
+            </div>
+        </div>
     </div>
-    <div class="app-subtitle">
-        Ključni podatki in kazalniki stanja, stopnje razvoja, vpliva in učinkovitosti upravljanja turizma
-
-    </div>
-    <div class="app-description">
-        Preko 100 podatkov in strukturiranih tržnih, poslovnih, ekonomskih,
-        družbenih in okoljskih kazalnikov za vsako od 4 ravni ožje in širše zaokroženih
-        turističnih območij: Občine, Vodilne turistične destinacije, Perspektivne
-        turistične destinacije, Turistične regije in Makro destinacije slovenskega turizma.
-        Medsebojne primerjave in konkurenčno uvrščanje posameznih območij, primerjave s
-        kazalniki na ravni Slovenije. Diagnostika stanja v razvoju in delovanju turizma
-        na ravni destinacij. Stalna nadgradnja z aktualnimi podatki, novimi kazalniki in prikazi,
-        tudi s pomočjo umetne inteligence.
-    </div>
-    """,
-    unsafe_allow_html=True
+    """
 )
 
 st.markdown("<hr style='margin-top:20px;margin-bottom:20px;'>", unsafe_allow_html=True)
@@ -1918,38 +2217,100 @@ def render_view(view_title: str, group_col: str):
     # mapping občina -> regija (normalizirano)
     muni_to_region = {normalize_name(o): r for o, r in zip(df_regions["Občine"], df_regions[group_col])}
 
-    # dropdowni
-    top_left, top_right = st.columns([1.2, 1])
-    with top_left:
-        selected_region = st.selectbox(group_col, regions_with_all, index=0, key=f"sel_group_{group_col}")
-    with top_right:
-        display_to_group = {}
-        group_options = [f"Vsi kazalniki ({len(indicator_cols)})"]
-        if grouped_filtered:
-            for g, items in grouped_filtered.items():
-                color_dot = GROUP_COLOR_EMOJI.get(g, "•")
-                label = f"{color_dot} {g} ({len(items)})"
-                display_to_group[label] = g
-                group_options.append(label)
-        if leftover:
-            group_options.append(f"Neuvrščeni ({len(leftover)})")
+    # izbor regije + skupine kazalnikov (levo, nad izborom kazalnika za zemljevid)
+    selected_region = st.selectbox(group_col, regions_with_all, index=0, key=f"sel_group_{group_col}")
+    selector_state_key = f"sel_group_img_{group_col}"
+    if selector_state_key not in st.session_state:
+        st.session_state[selector_state_key] = "__all__"
 
-        selected_group_display = st.selectbox(
-            "Skupina kazalnikov",
-            group_options,
-            index=0,
-            key=f"sel_group_ind_{group_col}",
+    image_group_specs = [
+        {"key": "__all__", "label": "Vsi kazalniki", "count": len(indicator_cols)},
+        {"key": "Družbeni kazalniki", "label": "Družbeni kazalniki", "count": len(grouped_filtered.get("Družbeni kazalniki", []))},
+        {"key": "Okoljski kazalniki", "label": "Okoljski kazalniki", "count": len(grouped_filtered.get("Okoljski kazalniki", []))},
+        {
+            "key": "Ekonomski nastanitveni in tržni turistični kazalniki",
+            "label": "Nastanitveni\nin tržni",
+            "count": len(grouped_filtered.get("Ekonomski nastanitveni in tržni turistični kazalniki", [])),
+        },
+        {
+            "key": "Ekonomsko poslovni kazalniki turistične dejavnosti",
+            "label": "Ekon.\nposlovni",
+            "count": len(grouped_filtered.get("Ekonomsko poslovni kazalniki turistične dejavnosti", [])),
+        },
+    ]
+
+    valid_group_keys = {spec["key"] for spec in image_group_specs}
+    if st.session_state[selector_state_key] not in valid_group_keys:
+        st.session_state[selector_state_key] = "__all__"
+    st.markdown("---")
+    selector_col, map_indicator_col = st.columns([1, 1], gap="large")
+    with selector_col:
+        st.markdown("**Skupina kazalnikov**")
+        selector_images = []
+        image_selector_ready = image_select is not None
+
+        for spec in image_group_specs:
+            key = spec["key"]
+            image_name = GROUP_BUTTON_IMAGE_FILES.get(key, "")
+            image_path = (Path(__file__).parent / image_name) if image_name else None
+            if not image_path or not image_path.exists():
+                image_selector_ready = False
+                selector_images.append("")
+            else:
+                prepared_path = prepare_group_button_image(str(image_path), "")
+                selector_images.append(prepared_path or str(image_path))
+
+        default_idx = next(
+            (i for i, spec in enumerate(image_group_specs) if spec["key"] == st.session_state[selector_state_key]),
+            0,
         )
-        if selected_group_display == f"Vsi kazalniki ({len(indicator_cols)})":
-            group_indicator_cols = indicator_cols
-        elif selected_group_display.startswith("Neuvrščeni"):
-            group_indicator_cols = leftover
+
+        if image_selector_ready:
+            selected_value = image_select(
+                label="",
+                images=selector_images,
+                index=default_idx,
+                use_container_width=False,
+                return_value="index",
+                key=f"sel_group_img_component_{group_col}",
+            )
+
+            selected_idx = default_idx
+            if isinstance(selected_value, int) and 0 <= selected_value < len(image_group_specs):
+                selected_idx = selected_value
+
+            candidate = image_group_specs[selected_idx]
+            if candidate["key"] == "__all__" or candidate["count"] > 0:
+                st.session_state[selector_state_key] = candidate["key"]
         else:
-            group_indicator_cols = grouped_filtered.get(display_to_group[selected_group_display], indicator_cols)
+            st.warning("Manjka komponenta `streamlit-image-select` ali ena od slik za gumbe. Uporabljam rezervni izbor.")
+            fallback_options = [spec["key"] for spec in image_group_specs]
+            fallback_labels = {
+                "__all__": f"Vsi kazalniki ({len(indicator_cols)})",
+                "Družbeni kazalniki": f"Družbeni kazalniki ({len(grouped_filtered.get('Družbeni kazalniki', []))})",
+                "Okoljski kazalniki": f"Okoljski kazalniki ({len(grouped_filtered.get('Okoljski kazalniki', []))})",
+                "Ekonomski nastanitveni in tržni turistični kazalniki": f"Ekonomski nastanitveni in tržni turistični kazalniki ({len(grouped_filtered.get('Ekonomski nastanitveni in tržni turistični kazalniki', []))})",
+                "Ekonomsko poslovni kazalniki turistične dejavnosti": f"Ekonomsko poslovni kazalniki turistične dejavnosti ({len(grouped_filtered.get('Ekonomsko poslovni kazalniki turistične dejavnosti', []))})",
+            }
+            selected_fallback = st.selectbox(
+                "Skupina kazalnikov",
+                fallback_options,
+                index=default_idx,
+                format_func=lambda k: fallback_labels.get(k, k),
+                key=f"sel_group_ind_{group_col}",
+            )
+            st.session_state[selector_state_key] = selected_fallback
 
-        if not group_indicator_cols:
-            group_indicator_cols = indicator_cols
+    selected_group_key = st.session_state[selector_state_key]
+    if selected_group_key == "__all__":
+        group_indicator_cols = indicator_cols
+    else:
+        group_indicator_cols = grouped_filtered.get(selected_group_key, [])
 
+    if not group_indicator_cols:
+        group_indicator_cols = indicator_cols
+    with map_indicator_col:
+        st.markdown("<div style='min-height: 10rem;'></div>", unsafe_allow_html=True)
         map_indicator = st.selectbox(
             "Kazalnik za zemljevid",
             group_indicator_cols,
@@ -2189,7 +2550,7 @@ def render_view(view_title: str, group_col: str):
     if selected_region != "Vsa območja":
         st.markdown("---")
         if group_sections:
-            st.markdown("**Najboljši/Najslabši kazalniki glede na skupinah**")
+            st.markdown("**Najboljši/Najslabši kazalniki po skupinah**")
             st.caption("Vsaka skupina kazalnikov ima ločeno razvrstitev. Za povprečja in indekse je uporabljen neposreden odmik glede na Slovenijo (%). Za kumulativne kazalnike je uporabljen odmik deleža kazalnika glede na referenčni delež regije (o.t.), da velikost območja ne izkrivlja rezultatov.")
 
             tab_labels = [
