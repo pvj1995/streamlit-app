@@ -51,30 +51,30 @@ except Exception:
     image_select = None
 
 
-def require_password():
-    if "APP_PASSWORD" not in st.secrets:
-        st.error("Manjka APP_PASSWORD v Streamlit Secrets.")
-        st.stop()
+# def require_password():
+#     if "APP_PASSWORD" not in st.secrets:
+#         st.error("Manjka APP_PASSWORD v Streamlit Secrets.")
+#         st.stop()
 
-    if st.session_state.get("authenticated", False):
-        return
+#     if st.session_state.get("authenticated", False):
+#         return
 
-    st.title("Prijava")
+#     st.title("Prijava")
 
-    with st.form("login_form", clear_on_submit=False):
-        pwd = st.text_input("Geslo", type="password")
-        submitted = st.form_submit_button("Vstopi")
+#     with st.form("login_form", clear_on_submit=False):
+#         pwd = st.text_input("Geslo", type="password")
+#         submitted = st.form_submit_button("Vstopi")
 
-        if submitted:
-            if hmac.compare_digest(pwd, st.secrets["APP_PASSWORD"]):
-                st.session_state["authenticated"] = True
-                st.rerun()
-            else:
-                st.error("Napačno geslo.")
+#         if submitted:
+#             if hmac.compare_digest(pwd, st.secrets["APP_PASSWORD"]):
+#                 st.session_state["authenticated"] = True
+#                 st.rerun()
+#             else:
+#                 st.error("Napačno geslo.")
 
-    st.stop()
+#     st.stop()
 
-require_password()
+# require_password()
 
 
 DATA_XLSX_DEFAULT = "Skupna tabela občine.xlsx"
@@ -1913,7 +1913,7 @@ def load_geojson_from_upload_or_file(uploaded, default_path: Path):
 st.set_page_config(page_title="Upravljanje turističnih destinacij Slovenije© \n Ključni podatki in kazalniki", layout="wide", initial_sidebar_state="collapsed")
 
 title_slideshow_images = load_title_slideshow_images()
-title_slideshow_step_seconds = 6
+title_slideshow_step_seconds = 4
 title_slideshow_spacer = title_slideshow_images[0] if title_slideshow_images else ""
 title_slideshow_count = max(1, len(title_slideshow_images))
 title_slideshow_total_seconds = title_slideshow_count * title_slideshow_step_seconds
