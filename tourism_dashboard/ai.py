@@ -11,7 +11,49 @@ from tourism_dashboard.config import AI_CACHE_CONNECTION_NAME_DEFAULT, AI_CACHE_
 from tourism_dashboard.helpers import get_secret_value, sql
 
 
-AI_COMMENTARY_FORMAT_VERSION = "structured_v1"
+AI_COMMENTARY_FORMAT_VERSION = "structured_v2"
+
+AI_COMMENTARY_JSON_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "short_commentary": {
+            "type": "string",
+        },
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "group": {"type": "string"},
+                    "strengths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "risks": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["group", "strengths", "risks"],
+                "additionalProperties": False,
+            },
+        },
+        "recommendations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["title", "description"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["short_commentary", "groups", "recommendations"],
+    "additionalProperties": False,
+}
 
 
 if TYPE_CHECKING:
@@ -499,6 +541,14 @@ def generate_region_ai_commentary(
         "model": model,
         "temperature": 0.15,
         "max_output_tokens": 2000,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "regional_tourism_commentary",
+                "strict": True,
+                "schema": AI_COMMENTARY_JSON_SCHEMA,
+            }
+        },
         "input": [
             {
                 "role": "system",
