@@ -10,7 +10,6 @@ import plotly.express as px
 import streamlit as st
 
 from tourism_dashboard.ai import (
-    AI_COMMENTARY_FORMAT_VERSION,
     generate_region_ai_commentary,
     get_cached_ai_commentary,
     store_cached_ai_commentary,
@@ -324,7 +323,6 @@ def render_region_top_bottom_and_ai(
 
     ai_signature_raw = json.dumps(
         {
-            "format_version": AI_COMMENTARY_FORMAT_VERSION,
             "region": selected_region,
             "groups": [
                 {
