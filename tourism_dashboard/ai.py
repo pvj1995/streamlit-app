@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
@@ -8,6 +9,9 @@ import streamlit as st
 
 from tourism_dashboard.config import AI_CACHE_CONNECTION_NAME_DEFAULT, AI_CACHE_TABLE_NAME
 from tourism_dashboard.helpers import get_secret_value, sql
+
+
+AI_COMMENTARY_FORMAT_VERSION = "structured_v1"
 
 
 if TYPE_CHECKING:
@@ -174,22 +178,131 @@ def grouped_rows_to_prompt_text(group_sections: List[Dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
+def clean_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def row_to_commentary_line(row: Dict[str, Any]) -> str:
+    indicator = clean_text(row.get("Kazalnik", "Kazalnik"))
+    region_val = clean_text(row.get("Vrednost območja", "—"))
+    slovenia_val = clean_text(row.get("Osnova (Slovenija)", "—"))
+    comparison = clean_text(row.get("Primerjalni odmik", "—"))
+    return f"{indicator}: {region_val} (Slovenija: {slovenia_val}; odmik: {comparison})."
+
+
+def fallback_group_points(rows: List[Dict[str, Any]], fallback_text: str) -> List[str]:
+    points = [row_to_commentary_line(row) for row in rows[:5]]
+    return points if points else [fallback_text]
+
+
+def fallback_recommendations(group_sections: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    recommendations: List[Dict[str, str]] = []
+    for section in group_sections:
+        group_name = clean_text(section.get("group", "Neznana skupina"))
+        top_names = ", ".join(clean_text(row.get("Kazalnik", "—")) for row in section.get("top_rows", [])[:2]) or "ključne prednosti"
+        bottom_names = (
+            ", ".join(clean_text(row.get("Kazalnik", "—")) for row in section.get("bottom_rows", [])[:2])
+            or "ključna tveganja"
+        )
+        recommendations.append(
+            {
+                "title": f"Ukrepi v sklopu: {group_name}",
+                "description": (
+                    f"Ohranite prednosti ({top_names}) in prioritetno naslovite tveganja "
+                    f"({bottom_names}) z jasnimi nosilci, roki in merljivimi cilji."
+                ),
+            }
+        )
+
+    generic_tail = [
+        {
+            "title": "Vzpostavite redno spremljanje po skupinah kazalnikov",
+            "description": (
+                "Napredek spremljajte ločeno po družbenih, okoljskih, nastanitveno-tržnih "
+                "in poslovnih kazalnikih, da bodo ukrepi bolj ciljno usmerjeni."
+            ),
+        },
+        {
+            "title": "Povežite razvojne ukrepe med vsebinskimi sklopi",
+            "description": (
+                "Razvoj ponudbe, upravljanje obiskov, poslovno uspešnost in vplive na okolje "
+                "obravnavajte povezano, ne kot ločene teme."
+            ),
+        },
+    ]
+
+    while len(recommendations) < 4 and generic_tail:
+        recommendations.append(generic_tail.pop(0))
+
+    return recommendations[:4]
+
+
+def build_commentary_markdown(
+    short_commentary: str,
+    group_payloads: List[Dict[str, Any]],
+    recommendations: List[Dict[str, str]],
+) -> str:
+    lines = ["**Kratek celosten komentar**", clean_text(short_commentary) or "Ni dovolj podatkov za komentar.", ""]
+    lines.extend(["## Glavne prednosti in tveganja po skupinah", ""])
+
+    for index, group_payload in enumerate(group_payloads, start=1):
+        group_name = clean_text(group_payload.get("group", f"Skupina {index}"))
+        strengths = [clean_text(item) for item in group_payload.get("strengths", []) if clean_text(item)]
+        risks = [clean_text(item) for item in group_payload.get("risks", []) if clean_text(item)]
+        if not strengths:
+            strengths = ["Ni dovolj podatkov za izpostavljene prednosti."]
+        if not risks:
+            risks = ["Ni dovolj podatkov za izpostavljena tveganja."]
+
+        lines.append(f"### {index}) {group_name}")
+        lines.append("")
+        lines.append("**Prednosti**")
+        for item in strengths[:5]:
+            lines.append(f"- {item}")
+        lines.append("")
+        lines.append("**Tveganja**")
+        for item in risks[:5]:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    lines.extend(["## 4 konkretna priporočila", ""])
+    for index, recommendation in enumerate(recommendations[:4], start=1):
+        title = clean_text(recommendation.get("title", f"Priporočilo {index}"))
+        description = clean_text(recommendation.get("description", ""))
+        lines.append(f"{index}. **{title}**")
+        if description:
+            lines.append(description)
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
 def fallback_region_commentary(region_name: str, group_sections: List[Dict[str, Any]]) -> str:
     summary_parts = []
+    group_payloads = []
     for section in group_sections:
-        group_name = section.get("group", "Neznana skupina")
-        top_names = ", ".join(row.get("Kazalnik", "—") for row in section.get("top_rows", [])[:2]) or "ni podatkov"
-        bottom_names = ", ".join(row.get("Kazalnik", "—") for row in section.get("bottom_rows", [])[:2]) or "ni podatkov"
+        group_name = clean_text(section.get("group", "Neznana skupina"))
+        top_rows = section.get("top_rows", [])
+        bottom_rows = section.get("bottom_rows", [])
+        top_names = ", ".join(clean_text(row.get("Kazalnik", "—")) for row in top_rows[:2]) or "ni podatkov"
+        bottom_names = ", ".join(clean_text(row.get("Kazalnik", "—")) for row in bottom_rows[:2]) or "ni podatkov"
         summary_parts.append(f"{group_name}: prednosti {top_names}; tveganja {bottom_names}")
+        group_payloads.append(
+            {
+                "group": group_name,
+                "strengths": fallback_group_points(top_rows, "Ni dovolj podatkov za izpostavljene prednosti."),
+                "risks": fallback_group_points(bottom_rows, "Ni dovolj podatkov za izpostavljena tveganja."),
+            }
+        )
 
-    summary_text = " | ".join(summary_parts) if summary_parts else "Ni dovolj podatkov za skupinsko primerjavo."
-    return (
-        f"**Povzetek za območje {region_name}:** {summary_text}. "
-        f"Primerjava je glede na slovensko osnovo.\n\n"
-        f"**Priporočila:**\n"
-        f"1. Ukrepe določite ločeno po skupinah kazalnikov, ne samo na ravni celotnega območja.\n"
-        f"2. Pri najslabših kazalnikih v vsaki skupini določite 2-3 ciljne ukrepe z nosilci in roki.\n"
-        f"3. Spremljajte napredek po skupinah in preverjajte, ali se slabši kazalniki približujejo slovenski osnovi."
+    short_commentary = (
+        f"Območje {region_name} je ocenjeno glede na slovensko osnovo in rezultate po posameznih skupinah "
+        f"kazalnikov. {' '.join(summary_parts) if summary_parts else 'Ni dovolj podatkov za skupinsko primerjavo.'}"
+    )
+    return build_commentary_markdown(
+        short_commentary=short_commentary,
+        group_payloads=group_payloads,
+        recommendations=fallback_recommendations(group_sections),
     )
 
 
@@ -203,6 +316,91 @@ def extract_response_text(resp_json: Dict[str, Any]) -> Optional[str]:
             if isinstance(text, str) and text.strip():
                 return text.strip()
     return None
+
+
+def parse_ai_commentary_payload(raw_text: str) -> Optional[Dict[str, Any]]:
+    text = raw_text.strip()
+    if not text:
+        return None
+
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    try:
+        payload = json.loads(text[start : end + 1])
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def build_group_payloads_from_ai(
+    payload: Dict[str, Any],
+    group_sections: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    groups_raw = payload.get("groups", [])
+    group_mapping: Dict[str, Dict[str, Any]] = {}
+    if isinstance(groups_raw, list):
+        for item in groups_raw:
+            if not isinstance(item, dict):
+                continue
+            group_name = clean_text(item.get("group", ""))
+            if group_name:
+                group_mapping[group_name] = item
+
+    rendered_groups: List[Dict[str, Any]] = []
+    for section in group_sections:
+        group_name = clean_text(section.get("group", "Neznana skupina"))
+        item = group_mapping.get(group_name, {})
+        strengths_raw = item.get("strengths", [])
+        risks_raw = item.get("risks", [])
+        strengths = [clean_text(entry) for entry in strengths_raw if clean_text(entry)] if isinstance(strengths_raw, list) else []
+        risks = [clean_text(entry) for entry in risks_raw if clean_text(entry)] if isinstance(risks_raw, list) else []
+        rendered_groups.append(
+            {
+                "group": group_name,
+                "strengths": strengths or fallback_group_points(
+                    section.get("top_rows", []),
+                    "Ni dovolj podatkov za izpostavljene prednosti.",
+                ),
+                "risks": risks or fallback_group_points(
+                    section.get("bottom_rows", []),
+                    "Ni dovolj podatkov za izpostavljena tveganja.",
+                ),
+            }
+        )
+    return rendered_groups
+
+
+def normalize_ai_recommendations(
+    payload: Dict[str, Any],
+    group_sections: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    recommendations_raw = payload.get("recommendations", [])
+    recommendations: List[Dict[str, str]] = []
+    if isinstance(recommendations_raw, list):
+        for item in recommendations_raw:
+            if not isinstance(item, dict):
+                continue
+            title = clean_text(item.get("title", ""))
+            description = clean_text(item.get("description", ""))
+            if title and description:
+                recommendations.append({"title": title, "description": description})
+
+    if len(recommendations) < 4:
+        fallback = fallback_recommendations(group_sections)
+        existing_titles = {item["title"] for item in recommendations}
+        for item in fallback:
+            if item["title"] not in existing_titles:
+                recommendations.append(item)
+            if len(recommendations) >= 4:
+                break
+    return recommendations[:4]
 
 
 def extract_openai_error_fields(resp: Any) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -270,24 +468,36 @@ def generate_region_ai_commentary(
 
     requests_module = cast(Any, requests)
     model = get_secret_value("OPENAI_MODEL", "gpt-5.4")
+    group_names = [clean_text(section.get("group", "Neznana skupina")) for section in group_sections]
     system_prompt = (
-        "Si analitik regionalnega razvoja turizma. Uporabi samo podane "
-        "kazalnike in podaj kratko, praktično razlago ter priporočila."
+        "Si analitik regionalnega razvoja turizma. Uporabi samo podane kazalnike. "
+        "Vedno vrni izključno veljaven JSON brez markdowna in brez dodatnega besedila."
     )
     user_prompt = (
         f"Območje: {region_name}\n\n"
         f"Top/Bottom po skupinah kazalnikov:\n{grouped_rows_to_prompt_text(group_sections)}\n\n"
-        "Naloga:\n"
-        "1) Napiši kratek celosten komentar (5-7 stavkov), ki povzema stanje po vseh štirih skupinah kazalnikov.\n"
-        "2) Jasno loči, katere so glavne prednosti in katera tveganja izstopajo po posameznih skupinah.\n"
-        "3) Dodaj 4 konkretna priporočila za izboljšanje, pri čemer naj priporočila pokrijejo več skupin kazalnikov.\n"
-        "4) Uporabi samo podane podatke, brez izmišljenih razlag ali številk.\n"
-        "5) Piši v slovenščini, profesionalno, jedrnato."
+        "Vrni izključno JSON v naslednji strukturi:\n"
+        "{\n"
+        '  "short_commentary": "5-7 stavkov, celosten komentar.",\n'
+        '  "groups": [\n'
+        '    {"group": "ime skupine", "strengths": ["..."], "risks": ["..."]}\n'
+        "  ],\n"
+        '  "recommendations": [\n'
+        '    {"title": "kratek naslov", "description": "1-2 stavka"}\n'
+        "  ]\n"
+        "}\n\n"
+        f"Pravila:\n"
+        f"- Skupine vrni v istem vrstnem redu kot so podane: {', '.join(group_names)}.\n"
+        "- Za vsako skupino vrni 3 do 5 alinej v `strengths` in 3 do 5 alinej v `risks`.\n"
+        "- `short_commentary` naj bo kratek, celosten in jedrnat.\n"
+        "- `recommendations` naj vsebuje točno 4 priporočila.\n"
+        "- Uporabi samo podane podatke, brez izmišljenih številk in brez dodatnega besedila zunaj JSON.\n"
+        "- Piši v slovenščini, profesionalno in jasno."
     )
 
     payload = {
         "model": model,
-        "temperature": 0.3,
+        "temperature": 0.15,
         "max_output_tokens": 2000,
         "input": [
             {
@@ -318,7 +528,19 @@ def generate_region_ai_commentary(
                 text = extract_response_text(resp.json())
                 if not text:
                     return fallback_region_commentary(region_name, group_sections), "fallback", "AI odgovor je bil prazen."
-                return text, "ai", None
+                payload = parse_ai_commentary_payload(text)
+                if payload is None:
+                    return (
+                        fallback_region_commentary(region_name, group_sections),
+                        "fallback",
+                        "AI odgovor ni bil v pričakovani JSON strukturi.",
+                    )
+                rendered = build_commentary_markdown(
+                    short_commentary=clean_text(payload.get("short_commentary", "")),
+                    group_payloads=build_group_payloads_from_ai(payload, group_sections),
+                    recommendations=normalize_ai_recommendations(payload, group_sections),
+                )
+                return rendered, "ai", None
 
             message, err_type, err_code = extract_openai_error_fields(resp)
             if attempt < max_attempts - 1 and should_retry_openai_call(resp.status_code, err_type, err_code):

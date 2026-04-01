@@ -10,6 +10,7 @@ import plotly.express as px
 import streamlit as st
 
 from tourism_dashboard.ai import (
+    AI_COMMENTARY_FORMAT_VERSION,
     generate_region_ai_commentary,
     get_cached_ai_commentary,
     store_cached_ai_commentary,
@@ -17,8 +18,9 @@ from tourism_dashboard.ai import (
 from tourism_dashboard.analytics import (
     build_top_bottom_group_sections,
     compute_region_aggregates,
-    get_market_cols_for_year,
     aggregate_indicator_with_rules,
+    get_market_cols_for_year,
+    get_top_bottom_reference_indicators,
 )
 from tourism_dashboard.assets import (
     get_button_image_path,
@@ -42,7 +44,7 @@ from tourism_dashboard.formatting import (
     is_rate_like,
     make_localized_column_config,
 )
-from tourism_dashboard.helpers import get_secret_value, normalize_name, parse_numeric, shorten_label, col_for_year
+from tourism_dashboard.helpers import get_secret_value, shorten_label, col_for_year
 from tourism_dashboard.maps import (
     build_region_geojson_from_municipalities,
     render_map_municipalities,
@@ -282,10 +284,12 @@ def render_region_top_bottom_and_ai(
     st.markdown("---")
     st.subheader("**Najboljši/Najslabši kazalniki po skupinah**")
     st.caption(
-        "Vsaka skupina kazalnikov ima ločeno razvrstitev. Za povprečja in indekse "
-        "je uporabljen neposreden odmik glede na Slovenijo (%). Za kumulativne "
+        "Vsaka skupina kazalnikov ima ločeno razvrstitev. Za kumulativne "
         "kazalnike je uporabljen odmik deleža kazalnika glede na referenčni delež "
-        "regije (o.t.), da velikost območja ne izkrivlja rezultatov."
+        "regije (o.t.), da velikost območja ne izkrivlja rezultatov. Za ostale "
+        "kazalnike je prikazan neposredni odmik od vrednosti Slovenije, samo "
+        "razvrščanje pa je standardizirano glede na tipični razpon kazalnika med "
+        "območji iste ravni."
     )
 
     tab_labels = [
@@ -293,23 +297,34 @@ def render_region_top_bottom_and_ai(
         for section in group_sections
     ]
     group_tabs = st.tabs(tab_labels)
-    table_cols = ["Kazalnik", "Smer kazalnika", "Vrednost območja", "Osnova (Slovenija)"]
+    table_cols = [
+        "Kazalnik",
+        "Smer kazalnika",
+        "Vrednost območja", 
+        "Osnova (Slovenija)", 
+        "Metoda primerjave", 
+        "Odstopanje_raw",
+        "Odstopanje_aligned_raw",
+        "Rangirni_odmik_raw",
+        "Enota odstopanja",]
 
     for tab, section in zip(group_tabs, group_sections):
         with tab:
             best_col, worst_col = st.columns(2)
             with best_col:
-                st.markdown(f"**Najboljši {section['limit']}**")
+                st.markdown(f"**Najboljši {section['group']}**")
                 st.dataframe(section["best_df"][table_cols], use_container_width=True, hide_index=True)
             with worst_col:
-                st.markdown(f"**Najslabši {section['limit']}**")
+                st.markdown(f"**Najslabši {section['group']}**")
                 st.dataframe(section["worst_df"][table_cols], use_container_width=True, hide_index=True)
+            show_shared_warning_if_needed_map(section['group'])
 
     st.markdown("---")
     render_ai_section_header()
 
     ai_signature_raw = json.dumps(
         {
+            "format_version": AI_COMMENTARY_FORMAT_VERSION,
             "region": selected_region,
             "groups": [
                 {
@@ -374,23 +389,18 @@ def render_region_top_bottom_and_ai(
 def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     st.caption(f"**Pogled:** {view_title}")
 
-    meta_cols = ctx.meta_cols | {group_col}
-    indicator_cols = [column for column in ctx.df.columns if column not in meta_cols and column not in ctx.market_cols]
+    indicator_cols = ctx.indicator_cols
     grouped_filtered, indicator_to_group = build_filtered_indicator_groups(indicator_cols, ctx.grouped_indicators)
 
-    df_regions = ctx.df[ctx.df[group_col].notna()].copy()
+    df_regions = ctx.numeric_df[ctx.numeric_df[group_col].notna()].copy()
     regions = sorted(df_regions[group_col].dropna().unique().tolist())
     regions_with_all = ["Vsa območja"] + regions
 
-    numeric_df = df_regions.copy()
-    for column in indicator_cols:
-        numeric_df[column] = parse_numeric(numeric_df[column])
-
-    df_slo_total = ctx.df.iloc[0]
-    df_slo_total_num = parse_numeric(df_slo_total[indicator_cols])
+    numeric_df = df_regions
+    df_slo_total_num = ctx.numeric_df.iloc[0][indicator_cols]
     municipality_to_region = {
-        normalize_name(municipality): region
-        for municipality, region in zip(df_regions["Občine"], df_regions[group_col])
+        municipality: region
+        for municipality, region in zip(df_regions["__obcina_norm__"], df_regions[group_col])
     }
 
     selected_region = st.selectbox(group_col, regions_with_all, index=0, key=f"sel_group_{group_col}")
@@ -429,6 +439,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
     agg_needed = [map_indicator] + [indicator for indicator in dash_inds if indicator != map_indicator]
     region_agg = compute_region_aggregates(numeric_df, regions, agg_needed, AGG_RULES, group_col=group_col)
+    region_agg_by_group = region_agg.set_index(group_col)
     region_to_value_map = dict(zip(region_agg[group_col], region_agg[map_indicator]))
 
     regions_geojson = None
@@ -466,7 +477,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     else:
         st.subheader("Povzetek izbranega območja")
         region_df = numeric_df[numeric_df[group_col] == selected_region].copy()
-        region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, selected_region)
+        region_total = region_agg_by_group.at[selected_region, map_indicator]
         sl_total = df_slo_total_num.get(map_indicator, np.nan)
 
         share_si = np.nan
@@ -497,7 +508,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         if ctx.dashboard_mode and dash_inds:
             kpi_cols = st.columns(min(6, len(dash_inds)))
             for idx, indicator in enumerate(dash_inds[:6]):
-                region_value = float(region_agg.loc[region_agg[group_col] == selected_region, indicator].iloc[0])
+                region_value = float(region_agg_by_group.at[selected_region, indicator])
                 slovenia_value = df_slo_total_num.get(indicator, np.nan)
 
                 share = np.nan
@@ -530,6 +541,13 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             grouped_filtered=grouped_filtered,
             agg_rules=AGG_RULES,
             region_name=selected_region,
+            reference_agg_df=compute_region_aggregates(
+                numeric_df=numeric_df,
+                regions=regions,
+                indicator_cols=get_top_bottom_reference_indicators(grouped_filtered, AGG_RULES),
+                agg_rules=AGG_RULES,
+                group_col=group_col,
+            ),
         )
 
     st.markdown("---")
@@ -573,11 +591,10 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                         height=780,
                     )
             else:
-                region_df = numeric_df[numeric_df[group_col] == selected_region].copy()
                 municipalities_in_region = set(region_df["__obcina_norm__"].tolist())
                 municipality_to_value = {
-                    normalize_name(municipality): float(value)
-                    for municipality, value in zip(region_df["Občine"], region_df[map_indicator])
+                    municipality: float(value)
+                    for municipality, value in zip(region_df["__obcina_norm__"], region_df[map_indicator])
                 }
                 render_map_municipalities(
                     ctx.geojson_obj,
@@ -602,7 +619,6 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             st.dataframe(table, use_container_width=True, height=680, hide_index=True, column_config=column_config)
         else:
             st.subheader(f"Tabela občin znotraj območja \n \n **:blue[{map_indicator}]**")
-            region_df = numeric_df[numeric_df[group_col] == selected_region].copy()
             region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, None)
             table = build_region_indicator_table(region_df, map_indicator, region_total, view_title)
             st.dataframe(
@@ -661,8 +677,7 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
         st.warning(f"V Excelu ne najdem stolpcev, ki se začnejo z: '{MARKET_PREFIX}'.")
         return
 
-    df_groups = ctx.df[ctx.df[group_col].notna()].copy()
-    numeric_df = df_groups.copy()
+    numeric_df = ctx.numeric_df[ctx.numeric_df[group_col].notna()].copy()
 
     base_weight_col_template = "Prenočitve turistov SKUPAJ - 2024"
     base_weight_col = col_for_year(base_weight_col_template, selected_year)
@@ -673,9 +688,6 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
     if missing_cols:
         st.warning("Manjkajo stolpci za izbrano leto: " + ", ".join(missing_cols))
         return
-
-    for column in required_cols:
-        numeric_df[column] = parse_numeric(numeric_df[column])
 
     groups = sorted(numeric_df[group_col].dropna().unique().tolist())
     if not groups:

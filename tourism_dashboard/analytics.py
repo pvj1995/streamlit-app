@@ -19,6 +19,7 @@ from tourism_dashboard.config import (
 from tourism_dashboard.formatting import (
     format_comparison_delta,
     format_indicator_value_map,
+    get_indicator_gap_unit,
     is_lower_better,
 )
 
@@ -36,9 +37,30 @@ def get_default_population_base(indicator: str) -> str:
     return "Število prebivalcev (H2/2024)"
 
 
+def get_default_bed_capacity_base(indicator: str) -> str:
+    if "2025" in indicator:
+        return "Nastanitvene kapacitete - stalna ležišča 2025"
+    return "Nastanitvene kapacitete - stalna ležišča"
+
+
+def get_default_unit_capacity_base(indicator: str) -> str:
+    if "2025" in indicator:
+        return "Nastanitvene kapacitete - Nedeljive enote 2025"
+    return "Nastanitvene kapacitete - Nedeljive enote"
+
+
+def get_total_accommodation_establishment_base(indicator: str) -> str | None:
+    if "2025" in indicator:
+        return "Število vseh nastanitvenih obratov 2025"
+    return None
+
+
 def get_sum_comparison_base(indicator: str) -> tuple[str, str]:
     lower_indicator = indicator.lower()
     population_base = get_default_population_base(indicator)
+    bed_capacity_base = get_default_bed_capacity_base(indicator)
+    unit_capacity_base = get_default_unit_capacity_base(indicator)
+    establishment_base = get_total_accommodation_establishment_base(indicator)
 
     if indicator in {"Število prebivalcev (H2/2024)", "Število prebivalcev (H2/2025)"}:
         return "Površina območja (km2)", "delež površine"
@@ -73,19 +95,47 @@ def get_sum_comparison_base(indicator: str) -> tuple[str, str]:
             return "Zaposleni v nastan.dejav. (I55) v registr.podjetjih in s.p.", "delež zaposlenih v nastanitvi"
     if "poraba el.energije" in lower_indicator and "gostinstvo" in lower_indicator:
         return "Prihodki reg.podjetij in s.p. v Gostinstvu (I)", "delež prihodkov v gostinstvu"
+    # Tourism-flow and accommodation-supply totals are more meaningful against sector capacity
+    # than against resident population; subtype totals are benchmarked to the matching total stock.
+    if any(token in lower_indicator for token in ["prenočitve", "prihodi turistov"]):
+        return bed_capacity_base, "delež stalnih ležišč"
+    if indicator.startswith("Nastanitvene kapacitete -") or indicator == "Število vseh nastanitvenih obratov 2025":
+        return population_base, "delež prebivalstva"
     if any(
         token in lower_indicator
         for token in [
-            "prenočitve",
-            "prihodi turistov",
-            "nastanitvene kapacitete",
+            "sob ",
+            "sob v ",
+            "enot v ",
+            "nedeljive enote",
+            "nedeljivih enot",
+        ]
+    ):
+        return unit_capacity_base, "delež sob/enot"
+    if any(
+        token in lower_indicator
+        for token in [
+            "stalna ležišča",
+            "staln. ležišč",
+            "lež",
+        ]
+    ):
+        return bed_capacity_base, "delež stalnih ležišč"
+    if establishment_base and any(
+        token in lower_indicator
+        for token in [
             "nastanitvenih obratov",
             "hotelov",
             "kampov",
             "turističnih kmetij",
-            "ležišč",
-            "sob ",
-            "nedeljive enote",
+            "drugih vrst no",
+        ]
+    ):
+        return establishment_base, "delež nastanitvenih obratov"
+    if any(
+        token in lower_indicator
+        for token in [
+            "nastanitvene kapacitete",
         ]
     ):
         return population_base, "delež prebivalstva"
@@ -179,6 +229,105 @@ def aggregate_indicator_with_rules(
     return float(values.sum(skipna=True))
 
 
+def compute_non_sum_display_delta(
+    indicator: str,
+    region_value: float,
+    slovenia_value: float,
+) -> tuple[float, str, str]:
+    delta_raw = float(region_value) - float(slovenia_value)
+    delta_unit = get_indicator_gap_unit(indicator)
+    if delta_unit == "o.t.":
+        delta_raw *= 100.0
+    return delta_raw, delta_unit, "Neposredni odmik glede na slovensko osnovo"
+
+
+def compute_sum_display_delta(
+    reg_df: pd.DataFrame,
+    indicator: str,
+    agg_rules: dict[str, tuple[str, str | None]],
+    region_name: str,
+    region_value: float,
+    slovenia_value: float,
+    df_slo_total_num: pd.Series,
+) -> tuple[float, str, str]:
+    base_indicator, base_label = get_sum_comparison_base(indicator)
+    if base_indicator not in reg_df.columns:
+        return np.nan, "o.t.", f"Delež kazalnika glede na {base_label}"
+
+    base_reg = aggregate_indicator_with_rules(reg_df, base_indicator, agg_rules, region_name)
+    base_slo = df_slo_total_num.get(base_indicator, np.nan)
+    if pd.isna(base_reg) or pd.isna(base_slo) or float(base_slo) == 0:
+        return np.nan, "o.t.", f"Delež kazalnika glede na {base_label}"
+
+    indicator_share = float(region_value) / float(slovenia_value)
+    benchmark_share = float(base_reg) / float(base_slo)
+    delta_raw = (indicator_share - benchmark_share) * 100.0
+    return delta_raw, "o.t.", f"Delež kazalnika glede na {base_label}"
+
+
+def compute_indicator_metric_series(
+    reference_agg_df: pd.DataFrame,
+    indicator: str,
+    agg_rules: dict[str, tuple[str, str | None]],
+    df_slo_total_num: pd.Series,
+) -> pd.Series:
+    if indicator not in reference_agg_df.columns:
+        return pd.Series(dtype=float)
+
+    rule, _ = get_agg_rule(indicator, agg_rules)
+    slovenia_value = df_slo_total_num.get(indicator, np.nan)
+    if pd.isna(slovenia_value) or float(slovenia_value) == 0:
+        return pd.Series(dtype=float)
+
+    values = reference_agg_df[indicator].astype(float)
+    if rule == "sum":
+        base_indicator, _ = get_sum_comparison_base(indicator)
+        if base_indicator not in reference_agg_df.columns:
+            return pd.Series(dtype=float)
+        base_slo = df_slo_total_num.get(base_indicator, np.nan)
+        if pd.isna(base_slo) or float(base_slo) == 0:
+            return pd.Series(dtype=float)
+        base_values = reference_agg_df[base_indicator].astype(float)
+        metric_series = ((values / float(slovenia_value)) - (base_values / float(base_slo))) * 100.0
+        return metric_series.replace([np.inf, -np.inf], np.nan).dropna()
+
+    delta_series = values - float(slovenia_value)
+    if get_indicator_gap_unit(indicator) == "o.t.":
+        delta_series = delta_series * 100.0
+    return delta_series.replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def compute_indicator_ranking_scale(metric_series: pd.Series) -> float:
+    prepared = pd.to_numeric(metric_series, errors="coerce").dropna().astype(float)
+    if prepared.empty:
+        return np.nan
+
+    median_value = float(prepared.median())
+    median_abs = float(np.nanmedian(np.abs(prepared.values)))
+    mad = float((prepared - median_value).abs().median())
+
+    candidates = []
+    if mad > 1e-9:
+        candidates.append(mad * 1.4826)
+
+    if len(prepared) >= 4:
+        iqr = float(prepared.quantile(0.75) - prepared.quantile(0.25))
+        if iqr > 1e-9:
+            candidates.append(iqr / 1.349)
+
+    if len(prepared) >= 2:
+        std = float(prepared.std(ddof=0))
+        if std > 1e-9:
+            candidates.append(std)
+
+    if median_abs > 1e-9:
+        candidates.append(median_abs)
+
+    if candidates:
+        return max(candidates)
+    return 1.0
+
+
 def compute_region_aggregates(
     numeric_df: pd.DataFrame,
     regions: list[str],
@@ -186,18 +335,37 @@ def compute_region_aggregates(
     agg_rules: dict[str, tuple[str, str | None]],
     group_col: str,
 ) -> pd.DataFrame:
-    aggregated_df = pd.DataFrame({group_col: regions})
+    grouped_frames: dict[str, pd.DataFrame] = {
+        str(region): group for region, group in numeric_df.groupby(group_col, sort=False)
+    }
+    empty_frame = numeric_df.iloc[0:0]
+    aggregated_data: dict[str, list[Any]] = {group_col: regions}
     for indicator in indicator_cols:
-        aggregated_df[indicator] = [
+        aggregated_data[indicator] = [
             aggregate_indicator_with_rules(
-                numeric_df[numeric_df[group_col] == region],
+                grouped_frames[str(region)] if str(region) in grouped_frames else empty_frame,
                 indicator,
                 agg_rules,
                 region,
             )
             for region in regions
         ]
-    return aggregated_df
+    return pd.DataFrame(aggregated_data)
+
+
+def get_top_bottom_reference_indicators(
+    grouped_filtered: dict[str, list[str]],
+    agg_rules: dict[str, tuple[str, str | None]],
+) -> list[str]:
+    reference_indicators: set[str] = set()
+    for indicators in grouped_filtered.values():
+        for indicator in indicators:
+            reference_indicators.add(indicator)
+            rule, _ = get_agg_rule(indicator, agg_rules)
+            if rule == "sum":
+                base_indicator, _ = get_sum_comparison_base(indicator)
+                reference_indicators.add(base_indicator)
+    return sorted(reference_indicators)
 
 
 def compute_indicator_comparison(
@@ -206,6 +374,7 @@ def compute_indicator_comparison(
     agg_rules: dict[str, tuple[str, str | None]],
     region_name: str,
     df_slo_total_num: pd.Series,
+    reference_agg_df: pd.DataFrame | None = None,
 ) -> dict[str, Any] | None:
     region_value = aggregate_indicator_with_rules(reg_df, indicator, agg_rules, region_name)
     slovenia_value = df_slo_total_num.get(indicator, np.nan)
@@ -215,23 +384,39 @@ def compute_indicator_comparison(
 
     rule, _ = get_agg_rule(indicator, agg_rules)
     direction = -1.0 if is_lower_better(indicator) else 1.0
-    delta_raw = ((float(region_value) - float(slovenia_value)) / abs(float(slovenia_value))) * 100.0
-    delta_unit = "%"
-    comparison_method = "Neposredno glede na slovensko osnovo"
-
     if rule == "sum":
-        base_indicator, base_label = get_sum_comparison_base(indicator)
-        if base_indicator in reg_df.columns:
-            base_reg = aggregate_indicator_with_rules(reg_df, base_indicator, agg_rules, region_name)
-            base_slo = df_slo_total_num.get(base_indicator, np.nan)
-            if not pd.isna(base_reg) and not pd.isna(base_slo) and float(base_slo) != 0:
-                indicator_share = float(region_value) / float(slovenia_value)
-                benchmark_share = float(base_reg) / float(base_slo)
-                delta_raw = (indicator_share - benchmark_share) * 100.0
-                delta_unit = "o.t."
-                comparison_method = f"Delež kazalnika glede na {base_label}"
+        delta_raw, delta_unit, comparison_method = compute_sum_display_delta(
+            reg_df=reg_df,
+            indicator=indicator,
+            agg_rules=agg_rules,
+            region_name=region_name,
+            region_value=float(region_value),
+            slovenia_value=float(slovenia_value),
+            df_slo_total_num=df_slo_total_num,
+        )
+    else:
+        delta_raw, delta_unit, comparison_method = compute_non_sum_display_delta(
+            indicator=indicator,
+            region_value=float(region_value),
+            slovenia_value=float(slovenia_value),
+        )
+
+    if pd.isna(delta_raw):
+        return None
 
     delta_aligned = direction * delta_raw
+    ranking_score = delta_aligned
+    if reference_agg_df is not None:
+        metric_series = compute_indicator_metric_series(
+            reference_agg_df=reference_agg_df,
+            indicator=indicator,
+            agg_rules=agg_rules,
+            df_slo_total_num=df_slo_total_num,
+        )
+        scale = compute_indicator_ranking_scale(metric_series)
+        if not pd.isna(scale) and scale > 0:
+            ranking_score = delta_aligned / scale
+
     return {
         "Kazalnik": indicator,
         "Smer kazalnika": "Nižje je bolje" if direction < 0 else "Višje je bolje",
@@ -240,6 +425,7 @@ def compute_indicator_comparison(
         "Metoda primerjave": comparison_method,
         "Odstopanje_raw": delta_raw,
         "Odstopanje_aligned_raw": delta_aligned,
+        "Rangirni_odmik_raw": ranking_score,
         "Enota odstopanja": delta_unit,
     }
 
@@ -250,6 +436,7 @@ def build_top_bottom_group_sections(
     grouped_filtered: dict[str, list[str]],
     agg_rules: dict[str, tuple[str, str | None]],
     region_name: str,
+    reference_agg_df: pd.DataFrame | None = None,
 ) -> list[dict[str, Any]]:
     sections: list[dict[str, Any]] = []
     for group_name in TOP_BOTTOM_GROUP_ORDER:
@@ -266,6 +453,7 @@ def build_top_bottom_group_sections(
                 agg_rules=agg_rules,
                 region_name=region_name,
                 df_slo_total_num=df_slo_total_num,
+                reference_agg_df=reference_agg_df,
             )
             if row is not None:
                 row["Skupina kazalnikov"] = group_name
@@ -276,13 +464,13 @@ def build_top_bottom_group_sections(
 
         group_df = pd.DataFrame(comparison_rows)
         limit = min(TOP_BOTTOM_GROUP_LIMITS.get(group_name, 5), len(group_df))
-        best_df = group_df.nlargest(limit, "Odstopanje_aligned_raw").copy()
+        best_df = group_df.nlargest(limit, "Rangirni_odmik_raw").copy()
 
         remaining_df = group_df.drop(best_df.index)
         if len(remaining_df) >= limit:
-            worst_df = remaining_df.nsmallest(limit, "Odstopanje_aligned_raw").copy()
+            worst_df = remaining_df.nsmallest(limit, "Rangirni_odmik_raw").copy()
         else:
-            worst_df = group_df.nsmallest(limit, "Odstopanje_aligned_raw").copy()
+            worst_df = group_df.nsmallest(limit, "Rangirni_odmik_raw").copy()
 
         for table in (best_df, worst_df):
             table["Odstopanje glede na smer"] = table.apply(

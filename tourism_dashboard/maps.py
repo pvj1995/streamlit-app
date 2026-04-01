@@ -93,16 +93,15 @@ def palette(value: float | None, vmin: float, vmax: float) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def render_map_regions(
+def build_regions_map_html(
     regions_geojson: dict[str, Any],
     region_to_value: dict[str, float],
     indicator_label: str,
     group_col: str,
     height: int = 680,
-) -> None:
+) -> str | None:
     if folium is None or regions_geojson is None:
-        st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
-        return
+        return None
 
     folium_module = folium
     geojson_copy = json.loads(json.dumps(regions_geojson))
@@ -154,21 +153,40 @@ def render_map_regions(
 
     bounds = cast(Any, layer.get_bounds())
     map_obj.fit_bounds(bounds, padding=(40, 40), max_zoom=8)
-    components.html(map_obj._repr_html_(), height=height, scrolling=False)
+    return map_obj._repr_html_()
+
+
+def render_map_regions(
+    regions_geojson: dict[str, Any],
+    region_to_value: dict[str, float],
+    indicator_label: str,
+    group_col: str,
+    height: int = 680,
+) -> None:
+    html = build_regions_map_html(
+        regions_geojson=regions_geojson,
+        region_to_value=region_to_value,
+        indicator_label=indicator_label,
+        group_col=group_col,
+        height=height,
+    )
+    if html is None:
+        st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
+        return
+    components.html(html, height=height, scrolling=False)
 
 
 @st.cache_data(show_spinner=False)
-def render_map_municipalities(
+def build_municipalities_map_html(
     geojson_obj: dict[str, Any] | None,
     name_prop: str,
     municipalities_in_region: set[str],
     municipality_to_value: dict[str, float],
     indicator_label: str = "Vrednost",
     height: int = 680,
-) -> None:
+) -> str | None:
     if folium is None or geojson_obj is None:
-        st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
-        return
+        return None
 
     folium_module = folium
     geojson_copy = json.loads(json.dumps(geojson_obj))
@@ -247,4 +265,26 @@ def render_map_municipalities(
 
     bounds = cast(Any, layer.get_bounds())
     map_obj.fit_bounds(bounds, padding=(40, 40), max_zoom=9)
-    components.html(map_obj._repr_html_(), height=height, scrolling=False)
+    return map_obj._repr_html_()
+
+
+def render_map_municipalities(
+    geojson_obj: dict[str, Any] | None,
+    name_prop: str,
+    municipalities_in_region: set[str],
+    municipality_to_value: dict[str, float],
+    indicator_label: str = "Vrednost",
+    height: int = 680,
+) -> None:
+    html = build_municipalities_map_html(
+        geojson_obj=geojson_obj,
+        name_prop=name_prop,
+        municipalities_in_region=municipalities_in_region,
+        municipality_to_value=municipality_to_value,
+        indicator_label=indicator_label,
+        height=height,
+    )
+    if html is None:
+        st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
+        return
+    components.html(html, height=height, scrolling=False)

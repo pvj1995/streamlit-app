@@ -1,5 +1,6 @@
 import json
 import re
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -135,6 +136,23 @@ def load_excel(path_or_buffer) -> pd.DataFrame:
     data_df = raw_df.iloc[1:].copy()
     data_df.columns = raw_df.iloc[0].tolist()
     return data_df
+
+
+@st.cache_data(show_spinner=False)
+def load_excel_from_path(path_str: str) -> pd.DataFrame:
+    return load_excel(Path(path_str))
+
+
+@st.cache_data(show_spinner=False)
+def load_excel_from_bytes(raw_bytes: bytes) -> pd.DataFrame:
+    return load_excel(BytesIO(raw_bytes))
+
+
+def build_numeric_dataframe(df: pd.DataFrame, numeric_columns: list[str]) -> pd.DataFrame:
+    numeric_df = df.copy()
+    for column in numeric_columns:
+        numeric_df[column] = parse_numeric(numeric_df[column])
+    return numeric_df
 
 
 def try_load_geojson(path: Path):

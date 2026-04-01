@@ -1,3 +1,5 @@
+import hashlib
+
 import streamlit as st
 
 from tourism_dashboard.auth import require_password
@@ -15,9 +17,11 @@ from tourism_dashboard.config import (
     YEAR_NOTE_TEXT,
 )
 from tourism_dashboard.helpers import (
+    build_numeric_dataframe,
     find_col,
     find_excel_file,
-    load_excel,
+    load_excel_from_bytes,
+    load_excel_from_path,
     load_geojson_from_upload_or_file,
     load_indicator_groups,
     normalize_name,
@@ -26,6 +30,20 @@ from tourism_dashboard.maps import get_geojson_name_prop
 from tourism_dashboard.models import DashboardContext
 from tourism_dashboard.paths import BASE_DIR, DATA_DIR, LOGOS_DIR, first_existing
 from tourism_dashboard.ui import render_market_structure, render_view
+
+
+def load_source_dataframe(uploaded_file, default_path):
+    if uploaded_file is not None:
+        raw_bytes = uploaded_file.getvalue()
+        signature = f"upload:{hashlib.md5(raw_bytes).hexdigest()}"
+        return signature, load_excel_from_bytes(raw_bytes)
+
+    if default_path is None or not default_path.exists():
+        return None, None
+
+    stat = default_path.stat()
+    signature = f"path:{default_path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+    return signature, load_excel_from_path(str(default_path))
 
 
 st.set_page_config(
@@ -49,37 +67,70 @@ with st.sidebar:
     dashboard_mode = st.checkbox("Dashboard način (več kazalnikov)", value=True)
 
 
-if xlsx_file is not None:
-    df = load_excel(xlsx_file)
-else:
-    default_path = find_excel_file()
-    if default_path is None or not default_path.exists():
-        st.error(
-            f"Ne najdem privzetega Excela: {DATA_XLSX_FILENAME}. "
-            "Naloži Excel v stranski vrstici."
-        )
-        st.stop()
-    df = load_excel(default_path)
+default_path = find_excel_file()
+if xlsx_file is None and (default_path is None or not default_path.exists()):
+    st.error(
+        f"Ne najdem privzetega Excela: {DATA_XLSX_FILENAME}. "
+        "Naloži Excel v stranski vrstici."
+    )
+    st.stop()
 
-
-required_columns = {"Občine", "Turistična regija"}
-if not required_columns.issubset(df.columns):
-    st.error("V Excelu ne najdem stolpcev 'Občine' in/ali 'Turistična regija'.")
+source_signature, raw_df = load_source_dataframe(xlsx_file, default_path)
+if raw_df is None or source_signature is None:
+    st.error("Excela ni bilo mogoče naložiti.")
     st.stop()
 
 
-df = df.copy()
-df["__obcina_norm__"] = df["Občine"].apply(normalize_name)
+required_columns = {"Občine", "Turistična regija"}
+if not required_columns.issubset(raw_df.columns):
+    st.error("V Excelu ne najdem stolpcev 'Občine' in/ali 'Turistična regija'.")
+    st.stop()
 
-meta_cols = {
-    "Občine",
-    "Turistična regija",
-    "__obcina_norm__",
-    "Vodilne destinacije",
-    "Perspektivne destinacije",
-    "Makro destinacije",
-    "SLOVENIJA",
-}
+data_bundle_key = "_dashboard_data_bundle"
+cached_bundle = st.session_state.get(data_bundle_key)
+if cached_bundle is None or cached_bundle.get("signature") != source_signature:
+    df = raw_df.copy()
+    df["__obcina_norm__"] = df["Občine"].apply(normalize_name)
+
+    views = []
+    for title, wanted in VIEW_CANDIDATES:
+        column = find_col(df, wanted)
+        if column is not None:
+            views.append((title, column))
+
+    if not views:
+        st.error("V Excelu ne najdem stolpcev za poglede območij.")
+        st.stop()
+
+    market_cols = [column for column in df.columns if str(column).startswith(MARKET_PREFIX)]
+    meta_cols = {
+        "Občine",
+        "__obcina_norm__",
+        "Tip območja",
+        "SLOVENIJA",
+        *[column for _, column in views],
+    }
+    value_cols = [column for column in df.columns if column not in meta_cols]
+    indicator_cols = [column for column in value_cols if column not in market_cols]
+    numeric_df = build_numeric_dataframe(df, value_cols)
+
+    cached_bundle = {
+        "signature": source_signature,
+        "df": df,
+        "numeric_df": numeric_df,
+        "views": views,
+        "market_cols": market_cols,
+        "indicator_cols": indicator_cols,
+        "meta_cols": meta_cols,
+    }
+    st.session_state[data_bundle_key] = cached_bundle
+
+df = cached_bundle["df"]
+numeric_df = cached_bundle["numeric_df"]
+views = cached_bundle["views"]
+market_cols = cached_bundle["market_cols"]
+indicator_cols = cached_bundle["indicator_cols"]
+meta_cols = cached_bundle["meta_cols"]
 
 default_geojson_path = first_existing(
     DATA_DIR / GEOJSON_FILENAME,
@@ -94,24 +145,14 @@ mapping_path = first_existing(
 )
 grouped_indicators = load_indicator_groups(mapping_path)
 
-market_cols = [column for column in df.columns if str(column).startswith(MARKET_PREFIX)]
-
-views = []
-for title, wanted in VIEW_CANDIDATES:
-    column = find_col(df, wanted)
-    if column is not None:
-        views.append((title, column))
-
-if not views:
-    st.error("V Excelu ne najdem stolpcev za poglede območij.")
-    st.stop()
-
 ctx = DashboardContext(
     df=df,
+    numeric_df=numeric_df,
     geojson_obj=geojson_obj,
     geojson_name_prop=geojson_name_prop,
     grouped_indicators=grouped_indicators,
     market_cols=market_cols,
+    indicator_cols=indicator_cols,
     dashboard_mode=dashboard_mode,
     meta_cols=meta_cols,
 )

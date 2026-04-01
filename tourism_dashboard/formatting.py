@@ -109,8 +109,23 @@ def format_pct(value, decimals=1):
 def format_comparison_delta(value, unit: str) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "—"
-    suffix = " %" if unit == "%" else " o.t."
+    if unit == "%":
+        suffix = " %"
+    elif unit == "o.t.":
+        suffix = " o.t."
+    elif unit:
+        suffix = f" {unit}"
+    else:
+        suffix = ""
     return f"{'+' if float(value) >= 0 else ''}{format_si_number(float(value), 1)}{suffix}"
+
+
+def get_indicator_gap_unit(indicator: str) -> str:
+    if is_percent_like(indicator):
+        return "o.t."
+    if indicator in INDIKATORJI_Z_VALUTO:
+        return "€"
+    return ""
 
 
 def format_indicator_value_tables(indicator: str, value):
@@ -140,4 +155,3 @@ def make_localized_column_config(df: pd.DataFrame):
             else:
                 config[column] = st.column_config.NumberColumn(format="localized")
     return config
-

@@ -379,6 +379,7 @@ INDIKATORJI_Z_INDEKSI = {
 }
 
 INDIKATORJI_Z_OPOMBO = {
+    "Ekonomsko poslovni kazalniki turistične dejavnosti",
     "Zaposleni v Gostinstvu (I) v registr.podjetjih in s.p.",
     "Zaposleni v nastan.dejav. (I55) v registr.podjetjih in s.p.",
     "Vsi delovni aktivni na območju",
