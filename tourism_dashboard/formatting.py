@@ -144,13 +144,18 @@ def format_indicator_value_map(indicator: str, value):
     return format_si_number(value)
 
 
-def make_localized_column_config(df: pd.DataFrame):
+def make_localized_column_config(
+    df: pd.DataFrame,
+    source_columns: dict[str, str] | None = None,
+):
+    source_columns = source_columns or {}
     config = {}
     for column in df.columns:
         if pd.api.types.is_numeric_dtype(df[column]):
-            if is_percent_like(column):
+            source_column = source_columns.get(column, column)
+            if is_percent_like(source_column):
                 config[column] = st.column_config.NumberColumn(format="percent")
-            elif column in INDIKATORJI_Z_VALUTO:
+            elif source_column in INDIKATORJI_Z_VALUTO:
                 config[column] = st.column_config.NumberColumn(format="euro")
             else:
                 config[column] = st.column_config.NumberColumn(format="localized")

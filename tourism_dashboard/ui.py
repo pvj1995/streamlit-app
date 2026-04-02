@@ -610,11 +610,14 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             table = region_agg[[group_col, map_indicator]].copy()
             table = table.sort_values(map_indicator, ascending=False, na_position="last")
             table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
-            column_config = make_localized_column_config(table)
-            old_key = next(iter(column_config))
-            column_config["Vrednost"] = column_config.pop(old_key)
             table = table.rename(columns={map_indicator: "Vrednost"})
-            st.dataframe(table, use_container_width=True, height=680, hide_index=True, column_config=column_config)
+            st.dataframe(
+                table,
+                use_container_width=True,
+                height=680,
+                hide_index=True,
+                column_config=make_localized_column_config(table, source_columns={"Vrednost": map_indicator}),
+            )
         else:
             st.subheader(f"Tabela občin znotraj območja \n \n **:blue[{map_indicator}]**")
             region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, None)
@@ -624,7 +627,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                 use_container_width=True,
                 height=680,
                 hide_index=True,
-                column_config=make_localized_column_config(table),
+                column_config=make_localized_column_config(table, source_columns={"Vrednost": map_indicator}),
             )
             if region_total and not np.isnan(region_total) and region_total != 0 and not is_rate_like(map_indicator):
                 if view_title == "Turistične regije":
