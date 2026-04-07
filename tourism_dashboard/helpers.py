@@ -27,7 +27,11 @@ def find_excel_file() -> Path | None:
 
     search_dirs = [DATA_DIR, BASE_DIR]
     for directory in search_dirs:
-        candidates = list(directory.glob("*.xlsx"))
+        candidates = [
+            candidate
+            for candidate in directory.glob("*.xlsx")
+            if not candidate.name.startswith("~$")
+        ]
         if not candidates:
             continue
         for candidate in candidates:
@@ -122,14 +126,14 @@ def col_for_year(col_name: str, year: int) -> str:
     return re.sub(r"(19|20)\d{2}", str(year), col_name)
 
 
-def load_excel(path_or_buffer) -> pd.DataFrame:
-    header_df = pd.read_excel(path_or_buffer, header=0)
+def load_excel(path_or_buffer, sheet_name: int | str = 0) -> pd.DataFrame:
+    header_df = pd.read_excel(path_or_buffer, header=0, sheet_name=sheet_name)
     municipality_col = find_col(header_df, ["obcine", "obcina"])
     region_col = find_col(header_df, ["turisticna regija", "turisticne regije", "turisticna"])
     if municipality_col and region_col:
         return header_df
 
-    raw_df = pd.read_excel(path_or_buffer, header=None)
+    raw_df = pd.read_excel(path_or_buffer, header=None, sheet_name=sheet_name)
     if raw_df.shape[0] < 2:
         return header_df
 
@@ -139,13 +143,13 @@ def load_excel(path_or_buffer) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_excel_from_path(path_str: str) -> pd.DataFrame:
-    return load_excel(Path(path_str))
+def load_excel_from_path(path_str: str, sheet_name: int | str = 0) -> pd.DataFrame:
+    return load_excel(Path(path_str), sheet_name=sheet_name)
 
 
 @st.cache_data(show_spinner=False)
-def load_excel_from_bytes(raw_bytes: bytes) -> pd.DataFrame:
-    return load_excel(BytesIO(raw_bytes))
+def load_excel_from_bytes(raw_bytes: bytes, sheet_name: int | str = 0) -> pd.DataFrame:
+    return load_excel(BytesIO(raw_bytes), sheet_name=sheet_name)
 
 
 def build_numeric_dataframe(df: pd.DataFrame, numeric_columns: list[str]) -> pd.DataFrame:

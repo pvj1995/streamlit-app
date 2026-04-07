@@ -690,8 +690,8 @@ GINI_CHANGE_2025_2019 = {
     "Jeruzalem - Ormož": 187.31875729086752,
     "Dolina Voglajne": 123.86607553639335,
     "Spodnja Savinjska Dolina": 94.98662017366016,
-    "Alpska Slovenija": 0.3823581168367557,
-    "Mediteranska Slovenija": 0.3692930910480988,
-    "Osrednja Slovenija in Ljubljana": 0.244510198775449,
-    "Termalna panonska Slovenija": 0.15291999846843807,
+    "Alpska Slovenija": 110.9,
+    "Mediteranska Slovenija": 103.9,
+    "Osrednja Slovenija in Ljubljana": 104.3,
+    "Termalna panonska Slovenija": 115.9,
 }

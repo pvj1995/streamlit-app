@@ -515,3 +515,55 @@ def get_market_cols_for_year(df: pd.DataFrame, year: int) -> tuple[list[str], li
             cols.append(column)
             labels.append(match.group(1).strip())
     return cols, labels
+
+
+def get_market_overnight_cols_for_year(df: pd.DataFrame, year: int) -> tuple[list[str], list[str]]:
+    pattern = re.compile(rf"^Število nočitev\s+{year}\s*-\s*(.+?)\s*$")
+    cols = []
+    labels = []
+    for column in df.columns:
+        match = pattern.match(str(column))
+        if match:
+            cols.append(column)
+            labels.append(match.group(1).strip())
+    return cols, labels
+
+
+def compute_market_growth_for_subset(
+    subset: pd.DataFrame,
+    *,
+    base_year: int,
+    target_year: int,
+) -> pd.DataFrame:
+    if subset.empty:
+        return pd.DataFrame(columns=["Trg", "Rast_raw"])
+
+    base_cols, base_labels = get_market_overnight_cols_for_year(subset, base_year)
+    target_cols, target_labels = get_market_overnight_cols_for_year(subset, target_year)
+    base_market_cols = {label: column for column, label in zip(base_cols, base_labels)}
+    target_market_cols = {label: column for column, label in zip(target_cols, target_labels)}
+    labels = [label for label in target_market_cols if label in base_market_cols]
+    if not labels:
+        return pd.DataFrame(columns=["Trg", "Rast_raw"])
+
+    rows: list[dict[str, Any]] = []
+    for label in labels:
+        base_share_col = base_market_cols[label]
+        target_share_col = target_market_cols[label]
+        base_values = subset[base_share_col].astype(float)
+        target_values = subset[target_share_col].astype(float)
+        mask = (~base_values.isna()) & (~target_values.isna()) & (base_values >= 0) & (target_values >= 0)
+        if not mask.any():
+            rows.append({"Trg": label, "Rast_raw": np.nan})
+            continue
+
+        base_sum = float(base_values[mask].sum(skipna=True))
+        target_sum = float(target_values[mask].sum(skipna=True))
+        if base_sum <= 0:
+            growth = np.nan
+        else:
+            growth = (target_sum / base_sum) - 1.0
+
+        rows.append({"Trg": label, "Rast_raw": growth})
+
+    return pd.DataFrame(rows)

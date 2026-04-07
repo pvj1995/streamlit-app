@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any
+import textwrap
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,7 @@ from tourism_dashboard.ai import (
 from tourism_dashboard.analytics import (
     build_top_bottom_group_sections,
     compute_region_aggregates,
+    compute_market_growth_for_subset,
     aggregate_indicator_with_rules,
     get_market_cols_for_year,
     get_top_bottom_reference_indicators,
@@ -36,6 +38,7 @@ from tourism_dashboard.config import (
     SKUPNO_OPOZORILO_AGREGACIJA,
 )
 from tourism_dashboard.formatting import (
+    ColumnWidth,
     format_indicator_value_map,
     format_indicator_value_tables,
     format_pct,
@@ -271,6 +274,413 @@ def format_indicator_option_label(indicator: str, indicator_to_group: dict[str, 
     return f"{emoji} {indicator}"
 
 
+def prepend_rank_column(df: pd.DataFrame, column_name: str = "#") -> pd.DataFrame:
+    ranked_df = df.reset_index(drop=True).copy()
+    ranked_df.insert(0, column_name, np.arange(1, len(ranked_df) + 1))
+    return ranked_df
+
+
+def prefix_rank_to_label_column(df: pd.DataFrame, label_column: str) -> pd.DataFrame:
+    ranked_df = df.reset_index(drop=True).copy()
+    ranked_df[label_column] = [
+        f"{index}. {value}"
+        for index, value in enumerate(ranked_df[label_column].astype(str), start=1)
+    ]
+    return ranked_df
+
+
+def ranked_column_config(
+    df: pd.DataFrame,
+    *,
+    source_columns: dict[str, str] | None = None,
+    rank_column_name: str = "#",
+    width_overrides: dict[str, ColumnWidth] | None = None,
+) -> dict[str, Any]:
+    width_overrides = width_overrides or {}
+    column_config = make_localized_column_config(
+        df,
+        source_columns=source_columns,
+        width_overrides=width_overrides,
+    )
+    if rank_column_name in df.columns:
+        column_config[rank_column_name] = st.column_config.NumberColumn(
+            rank_column_name,
+            help="Rang",
+            format="%d",
+            width=width_overrides.get(rank_column_name, "small"),
+        )
+    return column_config
+
+
+def render_ranked_dataframe(
+    df: pd.DataFrame,
+    *,
+    source_columns: dict[str, str] | None = None,
+    width_overrides: dict[str, ColumnWidth] | None = None,
+    use_container_width: bool = True,
+    hide_index: bool = True,
+    height: int | None = None,
+) -> None:
+    ranked_df = prepend_rank_column(df)
+    dataframe_kwargs: dict[str, Any] = {
+        "use_container_width": use_container_width,
+        "hide_index": hide_index,
+        "column_config": ranked_column_config(
+            ranked_df,
+            source_columns=source_columns,
+            width_overrides=width_overrides,
+        ),
+    }
+    if height is not None:
+        dataframe_kwargs["height"] = height
+
+    st.dataframe(
+        ranked_df,
+        **dataframe_kwargs,
+    )
+
+
+def wrap_market_chart_label(label: str, width: int = 18) -> str:
+    wrapped = textwrap.wrap(
+        str(label),
+        width=width,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "<br>".join(wrapped) if wrapped else str(label)
+
+
+def normalize_market_display_label(label: str) -> str:
+    mapping = {
+        "DACH trgi": "DACH trgi (nemško govoreči trgi: D, A in CH)",
+    }
+    return mapping.get(str(label).strip(), str(label).strip())
+
+
+def format_growth_label(value: float) -> str:
+    if pd.isna(value):
+        return "—"
+    return format_pct(float(value) * 100.0, 1)
+
+
+def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
+    if growth_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o rasti po trgih.")
+        return
+
+    chart_df = growth_df.copy().dropna(subset=["Rast_raw"])
+    if chart_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o rasti po trgih.")
+        return
+
+    chart_df["Trg"] = chart_df["Trg"].apply(normalize_market_display_label)
+    chart_df = chart_df.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
+    chart_df["Trg_chart"] = chart_df["Trg"].apply(wrap_market_chart_label)
+    chart_df["Rast_prikaz"] = chart_df["Rast_raw"]
+    chart_df["Rast_label"] = chart_df["Rast_raw"].apply(format_growth_label)
+
+    max_abs_growth = float(np.nanmax(np.abs(chart_df["Rast_raw"].values)))
+    if not np.isfinite(max_abs_growth) or max_abs_growth <= 0:
+        max_abs_growth = 0.05
+    axis_padding = max(max_abs_growth * 0.1, 0.02)
+    axis_limit = max_abs_growth + axis_padding
+
+    st.markdown(f"**{title}**")
+    fig = px.bar(
+        chart_df,
+        x="Trg_chart",
+        y="Rast_prikaz",
+        color="Trg",
+        color_discrete_map=MARKET_COLOR_MAP,
+        text="Rast_label",
+    )
+    fig.update_traces(
+        cliponaxis=False,
+        textposition="outside",
+        customdata=chart_df[["Trg", "Rast_label"]].values,
+        hovertemplate="<b>%{customdata[0]}</b><br>Rast: %{customdata[1]}<extra></extra>",
+    )
+    fig.update_layout(
+        margin=dict(t=20, b=20, l=10, r=10),
+        showlegend=False,
+        xaxis_title="Trgi",
+        yaxis_title="Rast prenočitev",
+        uniformtext_minsize=10,
+        uniformtext_mode="hide",
+    )
+    fig.update_xaxes(tickangle=0, automargin=True)
+    fig.update_yaxes(
+        range=[-axis_limit, axis_limit],
+        tickformat=".0%",
+        zeroline=True,
+        zerolinewidth=1,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_market_growth_table(growth_df: pd.DataFrame) -> None:
+    if growth_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o rasti po trgih.")
+        return
+
+    table = growth_df.copy().dropna(subset=["Rast_raw"])
+    if table.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o rasti po trgih.")
+        return
+
+    table["Trg"] = table["Trg"].apply(normalize_market_display_label)
+    table = table.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
+    table["Rast (%)"] = table["Rast_raw"].apply(format_growth_label)
+    render_ranked_dataframe(table[["Trg", "Rast (%)"]])
+
+
+def render_market_structure_distribution(
+    *,
+    selected_group: str,
+    group_col: str,
+    mode: str,
+    selected_year: int,
+    df_source: pd.DataFrame,
+    numeric_df: pd.DataFrame,
+) -> None:
+    base_weight_col_template = "Prenočitve turistov SKUPAJ - 2024"
+    base_weight_col = col_for_year(base_weight_col_template, selected_year)
+
+    market_cols_year, market_labels_year = get_market_cols_for_year(df_source, selected_year)
+    required_cols = [base_weight_col] + market_cols_year
+    missing_cols = [column for column in required_cols if column not in numeric_df.columns]
+    if missing_cols:
+        st.warning("Manjkajo stolpci za izbrano leto: " + ", ".join(missing_cols))
+        return
+
+    subset = numeric_df[numeric_df[group_col] == selected_group].copy()
+    if subset.empty:
+        st.info("Ni podatkov za izbrano območje.")
+        return
+
+    total_weights = subset[base_weight_col].astype(float)
+    denominator = float(np.nansum(total_weights.values)) if base_weight_col in subset.columns else np.nan
+    if not denominator or np.isnan(denominator) or denominator <= 0:
+        st.warning("Manjkajo prenočitve SKUPAJ (utež) ali so 0, zato strukture ne morem izračunati.")
+        return
+
+    values = {}
+    for column, label in zip(market_cols_year, market_labels_year):
+        series = subset[column].astype(float)
+        mask = (~series.isna()) & (~total_weights.isna()) & (total_weights > 0)
+        if mask.any():
+            values[label] = float(
+                np.nansum((series[mask] * total_weights[mask]).values)
+                / np.nansum(total_weights[mask].values)
+            )
+        else:
+            values[label] = np.nan
+
+    structure_df = pd.DataFrame({"Trg": list(values.keys()), "Delež": list(values.values())}).dropna()
+    total_share = float(structure_df["Delež"].sum()) if not structure_df.empty else 0.0
+    structure_df["Delež_norm"] = structure_df["Delež"] / total_share if total_share > 0 else np.nan
+
+    if mode == "Celotno območje":
+        st.markdown(f"### {selected_group}")
+        chart_col, table_col = st.columns([1.2, 1])
+        with chart_col:
+            st.markdown("**Tortni prikaz (normalizirano na 100%)**")
+            pie_df = structure_df.sort_values("Delež_norm", ascending=False)
+            pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
+            fig = px.pie(
+                pie_df,
+                names="Trg_short",
+                values="Delež_norm",
+                color="Trg",
+                color_discrete_map=MARKET_COLOR_MAP,
+                hole=0.4,
+            )
+            fig.update_traces(
+                textposition="inside",
+                textinfo="percent+label",
+                hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
+                customdata=pie_df[["Trg"]].values,
+            )
+            fig.update_layout(
+                margin=dict(t=10, b=10, l=10, r=10),
+                showlegend=True,
+                legend_title_text="Trgi",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with table_col:
+            st.markdown("**Tabela**")
+            table = structure_df.copy()
+            table["Delež (%)"] = table["Delež_norm"]
+            table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
+            render_ranked_dataframe(
+                table,
+                source_columns=None,
+            )
+
+        st.caption(
+            "Opomba: deleži so izračunani uteženo glede na celotno število prenočitev "
+            "in nato normalizirani na 100% (zaradi zaokroževanja/manjkajočih trgov)."
+        )
+        return
+
+    st.markdown(f"### Občine znotraj območja: {selected_group}")
+    municipality_df = subset[["Občine", base_weight_col] + market_cols_year].copy().rename(columns={"Občine": "Občina"})
+    chosen_muni = st.selectbox(
+        "Izberi občino",
+        municipality_df["Občina"].dropna().astype(str).tolist(),
+        index=0,
+        key=f"trgi_muni_{group_col}_{selected_year}",
+    )
+
+    municipality_row = municipality_df[municipality_df["Občina"] == chosen_muni].iloc[0]
+    municipality_values = [
+        {"Trg": label, "Delež": float(municipality_row[column]) if pd.notna(municipality_row[column]) else np.nan}
+        for column, label in zip(market_cols_year, market_labels_year)
+    ]
+    municipality_structure = pd.DataFrame(municipality_values).dropna()
+    municipality_total = float(municipality_structure["Delež"].sum()) if not municipality_structure.empty else 0.0
+    municipality_structure["Delež_norm"] = (
+        municipality_structure["Delež"] / municipality_total if municipality_total > 0 else np.nan
+    )
+
+    chart_col, table_col = st.columns([1.2, 1])
+    with chart_col:
+        st.markdown(f"**{chosen_muni} – tortni prikaz (normalizirano na 100%)**")
+        pie_df = municipality_structure.sort_values("Delež_norm", ascending=False)
+        pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
+        fig = px.pie(
+            pie_df,
+            names="Trg_short",
+            values="Delež_norm",
+            color="Trg",
+            color_discrete_map=MARKET_COLOR_MAP,
+            hole=0.4,
+        )
+        fig.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+            hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
+            customdata=pie_df[["Trg"]].values,
+        )
+        fig.update_layout(
+            margin=dict(t=10, b=10, l=10, r=10),
+            showlegend=True,
+            legend_title_text="Trgi",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with table_col:
+        st.markdown("**Tabela**")
+        table = municipality_structure.copy()
+        table["Delež (%)"] = municipality_structure["Delež_norm"]
+        table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
+        render_ranked_dataframe(
+            table,
+        )
+
+    st.markdown("**Tabela občin (povzetek)**")
+
+    def top_market(row: pd.Series) -> tuple[str, float]:
+        pairs = [
+            (label, row[column])
+            for column, label in zip(market_cols_year, market_labels_year)
+            if pd.notna(row[column])
+        ]
+        if not pairs:
+            return "—", np.nan
+        return max(pairs, key=lambda pair: pair[1])
+
+    tops = municipality_df.copy()
+    tops["Top trg"] = tops.apply(lambda row: top_market(row)[0], axis=1)
+    tops["Top trg delež (%)"] = tops.apply(
+        lambda row: top_market(row)[1] if pd.notna(top_market(row)[1]) else np.nan,
+        axis=1,
+    )
+    tops_view = tops[["Občina", base_weight_col, "Top trg", "Top trg delež (%)"]].copy()
+    tops_view = tops_view.sort_values(base_weight_col, ascending=False, na_position="last")
+    render_ranked_dataframe(
+        tops_view,
+    )
+
+
+def render_market_growth_distribution(
+    *,
+    selected_group: str,
+    group_col: str,
+    mode: str,
+    growth_numeric_df: pd.DataFrame | None,
+) -> None:
+    if growth_numeric_df is None or growth_numeric_df.empty:
+        st.warning("V delovnem listu 'Rast prenočitev po trgih' ni podatkov za prikaz rasti po trgih.")
+        return
+
+    period_options = {
+        "2025/2019": (2019, 2025),
+        "2025/2024": (2024, 2025),
+    }
+    selected_period = st.radio(
+        "Primerjalno obdobje",
+        options=list(period_options.keys()),
+        horizontal=True,
+        key=f"trgi_growth_period_{group_col}",
+    )
+    base_year, target_year = period_options[selected_period]
+
+    subset = growth_numeric_df[growth_numeric_df[group_col] == selected_group].copy()
+    if subset.empty:
+        st.info("Ni podatkov za izbrano območje.")
+        return
+
+    st.caption(
+        "Rast je izračunana neposredno iz dejanskega števila prenočitev po trgih "
+        f"({target_year} glede na {base_year})"
+    )
+
+    if mode == "Celotno območje":
+        growth_df = compute_market_growth_for_subset(
+            subset,
+            base_year=base_year,
+            target_year=target_year,
+        )
+        st.markdown(f"### {selected_group}")
+        chart_col, table_col = st.columns([1.4, 1])
+        with chart_col:
+            render_market_growth_chart(
+                growth_df,
+                f"Rast števila prenočitev po trgih ({selected_period})",
+            )
+        with table_col:
+            st.markdown("**Tabela**")
+            render_market_growth_table(growth_df)
+        return
+
+    st.markdown(f"### Občine znotraj območja: {selected_group}")
+    municipality_names = subset["Občine"].dropna().astype(str).tolist()
+    chosen_muni = st.selectbox(
+        "Izberi občino",
+        municipality_names,
+        index=0,
+        key=f"trgi_growth_muni_{group_col}_{selected_period}",
+    )
+    municipality_subset = subset[subset["Občine"].astype(str) == chosen_muni].copy()
+    growth_df = compute_market_growth_for_subset(
+        municipality_subset,
+        base_year=base_year,
+        target_year=target_year,
+    )
+
+    chart_col, table_col = st.columns([1.4, 1])
+    with chart_col:
+        render_market_growth_chart(
+            growth_df,
+            f"{chosen_muni} – rast števila prenočitev po trgih ({selected_period})",
+        )
+    with table_col:
+        st.markdown("**Tabela**")
+        render_market_growth_table(growth_df)
+
+
 def render_region_top_bottom_and_ai(
     selected_region: str,
     group_col: str,
@@ -312,10 +722,10 @@ def render_region_top_bottom_and_ai(
             best_col, worst_col = st.columns(2)
             with best_col:
                 st.markdown(f"**Najboljši {section['group']}**")
-                st.dataframe(section["best_df"][table_cols], use_container_width=True, hide_index=True)
+                render_ranked_dataframe(section["best_df"][table_cols])
             with worst_col:
                 st.markdown(f"**Najslabši {section['group']}**")
-                st.dataframe(section["worst_df"][table_cols], use_container_width=True, hide_index=True)
+                render_ranked_dataframe(section["worst_df"][table_cols])
             show_shared_warning_if_needed_map(section['group'])
 
     st.markdown("---")
@@ -452,18 +862,44 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     group_sections = []
     if selected_region == "Vsa območja":
         st.subheader("Primerjava območij")
+        sort_col, direction_col = st.columns([2, 1])
+        with sort_col:
+            sort_indicator = st.selectbox(
+                "Razvrsti po",
+                agg_needed,
+                index=0,
+                key=f"compare_sort_{group_col}",
+                format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
+            )
+        with direction_col:
+            sort_direction = st.radio(
+                "Smer",
+                ["Padajoče", "Naraščajoče"],
+                horizontal=True,
+                key=f"compare_sort_dir_{group_col}",
+            )
+
         cols_to_show = [group_col] + agg_needed
         show_df = region_agg[cols_to_show].copy()
+        sort_ascending = sort_direction == "Naraščajoče"
+        show_df = show_df.sort_values(sort_indicator, ascending=sort_ascending, na_position="last")
         for column in cols_to_show[1:]:
             show_df[column] = show_df[column].apply(lambda value: format_indicator_value_tables(column, value))
-        show_df = show_df.sort_values(cols_to_show[1], ascending=False, na_position="last")
+        show_df = prefix_rank_to_label_column(show_df, group_col)
+        comparison_widths: dict[str, ColumnWidth] = {group_col: "large"}
+        for column in agg_needed:
+            comparison_widths[column] = "medium"
 
         st.dataframe(
             show_df,
             use_container_width=True,
             height=260,
-            hide_index=True,
-            column_config=make_localized_column_config(show_df),
+                hide_index=True,
+                column_config=make_localized_column_config(show_df, width_overrides=comparison_widths),
+        )
+        st.caption(
+            "Rang v tabeli sledi izbiri »Razvrsti po«. "
+            "Če tabelo dodatno razvrščaš s klikom na glavo stolpca, se prikazani rang ne posodobi."
         )
 
         _, _, kpi_col = st.columns([1, 2, 1])
@@ -611,23 +1047,19 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             table = table.sort_values(map_indicator, ascending=False, na_position="last")
             table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
             table = table.rename(columns={map_indicator: "Vrednost"})
-            st.dataframe(
+            render_ranked_dataframe(
                 table,
-                use_container_width=True,
+                source_columns={"Vrednost": map_indicator},
                 height=680,
-                hide_index=True,
-                column_config=make_localized_column_config(table, source_columns={"Vrednost": map_indicator}),
             )
         else:
             st.subheader(f"Tabela občin znotraj območja \n \n **:blue[{map_indicator}]**")
             region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, None)
             table = build_region_indicator_table(region_df, map_indicator, region_total, view_title)
-            st.dataframe(
+            render_ranked_dataframe(
                 table,
-                use_container_width=True,
+                source_columns={"Vrednost": map_indicator},
                 height=680,
-                hide_index=True,
-                column_config=make_localized_column_config(table, source_columns={"Vrednost": map_indicator}),
             )
             if region_total and not np.isnan(region_total) and region_total != 0 and not is_rate_like(map_indicator):
                 if view_title == "Turistične regije":
@@ -669,10 +1101,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
 def render_market_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     st.caption(f"**Pogled:** {view_title}")
-    st.subheader("Struktura prenočitev po trgih")
-
-    years = [2024, 2025]
-    selected_year = st.selectbox("Leto", years, index=len(years) - 1, key=f"trgi_year_{group_col}")
+    st.subheader("Prenočitve po trgih")
 
     if not ctx.market_cols:
         st.warning(f"V Excelu ne najdem stolpcev, ki se začnejo z: '{MARKET_PREFIX}'.")
@@ -680,22 +1109,21 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
 
     numeric_df = ctx.numeric_df[ctx.numeric_df[group_col].notna()].copy()
 
-    base_weight_col_template = "Prenočitve turistov SKUPAJ - 2024"
-    base_weight_col = col_for_year(base_weight_col_template, selected_year)
-
-    market_cols_year, market_labels_year = get_market_cols_for_year(ctx.df, selected_year)
-    required_cols = [base_weight_col] + market_cols_year
-    missing_cols = [column for column in required_cols if column not in numeric_df.columns]
-    if missing_cols:
-        st.warning("Manjkajo stolpci za izbrano leto: " + ", ".join(missing_cols))
-        return
-
-    groups = sorted(numeric_df[group_col].dropna().unique().tolist())
+    groups: list[str] = sorted(cast(list[str], numeric_df[group_col].dropna().unique().tolist()))
     if not groups:
         st.warning("Ne najdem nobenih območij za izbran pogled.")
         return
 
-    selected_group = st.selectbox(f"Izberi območje ({group_col})", groups, index=0, key=f"trgi_sel_{group_col}")
+    selected_group_raw = st.selectbox(
+        f"Izberi območje ({group_col})",
+        groups,
+        index=0,
+        key=f"trgi_sel_{group_col}",
+    )
+    if selected_group_raw is None:
+        st.info("Izberi območje za prikaz podatkov.")
+        return
+    selected_group = str(selected_group_raw)
     mode = st.radio(
         "Prikaz",
         ["Celotno območje", "Občine znotraj območja"],
@@ -703,132 +1131,35 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
         key=f"trgi_mode_{group_col}",
     )
 
-    subset = numeric_df[numeric_df[group_col] == selected_group].copy()
-    if subset.empty:
-        st.info("Ni podatkov za izbrano območje.")
-        return
-
-    total_weights = subset[base_weight_col].astype(float)
-    denominator = float(np.nansum(total_weights.values)) if base_weight_col in subset.columns else np.nan
-    if not denominator or np.isnan(denominator) or denominator <= 0:
-        st.warning("Manjkajo prenočitve SKUPAJ (utež) ali so 0, zato strukture ne morem izračunati.")
-        return
-
-    values = {}
-    for column, label in zip(market_cols_year, market_labels_year):
-        series = subset[column].astype(float)
-        mask = (~series.isna()) & (~total_weights.isna()) & (total_weights > 0)
-        if mask.any():
-            values[label] = float(np.nansum((series[mask] * total_weights[mask]).values) / np.nansum(total_weights[mask].values))
-        else:
-            values[label] = np.nan
-
-    structure_df = pd.DataFrame({"Trg": list(values.keys()), "Delež": list(values.values())}).dropna()
-    total_share = float(structure_df["Delež"].sum()) if not structure_df.empty else 0.0
-    structure_df["Delež_norm"] = structure_df["Delež"] / total_share if total_share > 0 else np.nan
-
-    if mode == "Celotno območje":
-        st.markdown(f"### {selected_group}")
-        chart_col, table_col = st.columns([1.2, 1])
-        with chart_col:
-            st.markdown("**Tortni prikaz (normalizirano na 100%)**")
-            pie_df = structure_df.sort_values("Delež_norm", ascending=False)
-            pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
-            fig = px.pie(
-                pie_df,
-                names="Trg_short",
-                values="Delež_norm",
-                color="Trg",
-                color_discrete_map=MARKET_COLOR_MAP,
-                hole=0.4,
-            )
-            fig.update_traces(
-                textposition="inside",
-                textinfo="percent+label",
-                hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
-                customdata=pie_df[["Trg"]].values,
-            )
-            fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=True, legend_title_text="Trgi")
-            st.plotly_chart(fig, use_container_width=True)
-
-        with table_col:
-            st.markdown("**Tabela**")
-            table = structure_df.copy()
-            table["Delež (%)"] = (table["Delež_norm"] * 100).round(1)
-            table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
-            st.dataframe(table, use_container_width=True, hide_index=True)
-
-        st.caption(
-            "Opomba: deleži so izračunani uteženo glede na celotno število prenočitev "
-            "in nato normalizirani na 100% (zaradi zaokroževanja/manjkajočih trgov)."
-        )
-        return
-
-    st.markdown(f"### Občine znotraj območja: {selected_group}")
-    municipality_df = subset[["Občine", base_weight_col] + market_cols_year].copy().rename(columns={"Občine": "Občina"})
-    chosen_muni = st.selectbox(
-        "Izberi občino",
-        municipality_df["Občina"].dropna().astype(str).tolist(),
-        index=0,
-        key=f"trgi_muni_{group_col}",
+    structure_tab, growth_tab = st.tabs(
+        ["Struktura prenočitev po trgih", "Rast števila prenočitev po trgih"]
     )
 
-    municipality_row = municipality_df[municipality_df["Občina"] == chosen_muni].iloc[0]
-    municipality_values = [
-        {"Trg": label, "Delež": float(municipality_row[column]) if pd.notna(municipality_row[column]) else np.nan}
-        for column, label in zip(market_cols_year, market_labels_year)
-    ]
-    municipality_structure = pd.DataFrame(municipality_values).dropna()
-    municipality_total = float(municipality_structure["Delež"].sum()) if not municipality_structure.empty else 0.0
-    municipality_structure["Delež_norm"] = municipality_structure["Delež"] / municipality_total if municipality_total > 0 else np.nan
-
-    chart_col, table_col = st.columns([1.2, 1])
-    with chart_col:
-        st.markdown(f"**{chosen_muni} – tortni prikaz (normalizirano na 100%)**")
-        pie_df = municipality_structure.sort_values("Delež_norm", ascending=False)
-        pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
-        fig = px.pie(
-            pie_df,
-            names="Trg_short",
-            values="Delež_norm",
-            color="Trg",
-            color_discrete_map=MARKET_COLOR_MAP,
-            hole=0.4,
+    with structure_tab:
+        years = [2019, 2024, 2025]
+        selected_year = st.selectbox(
+            "Leto",
+            years,
+            index=len(years) - 1,
+            key=f"trgi_year_{group_col}",
         )
-        fig.update_traces(
-            textposition="inside",
-            textinfo="percent+label",
-            hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
-            customdata=pie_df[["Trg"]].values,
+        render_market_structure_distribution(
+            selected_group=selected_group,
+            group_col=group_col,
+            mode=mode,
+            selected_year=selected_year,
+            df_source=ctx.df,
+            numeric_df=numeric_df,
         )
-        fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=True, legend_title_text="Trgi")
-        st.plotly_chart(fig, use_container_width=True)
 
-    with table_col:
-        st.markdown("**Tabela**")
-        table = municipality_structure.copy()
-        table["Delež (%)"] = (table["Delež_norm"] * 100).round(1)
-        table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
-        st.dataframe(table, use_container_width=True, hide_index=True)
-
-    st.markdown("**Tabela občin (povzetek)**")
-
-    def top_market(row: pd.Series) -> tuple[str, float]:
-        pairs = [
-            (label, row[column])
-            for column, label in zip(market_cols_year, market_labels_year)
-            if pd.notna(row[column])
-        ]
-        if not pairs:
-            return "—", np.nan
-        return max(pairs, key=lambda pair: pair[1])
-
-    tops = municipality_df.copy()
-    tops["Top trg"] = tops.apply(lambda row: top_market(row)[0], axis=1)
-    tops["Top trg delež (%)"] = tops.apply(
-        lambda row: top_market(row)[1] * 100 if pd.notna(top_market(row)[1]) else np.nan,
-        axis=1,
-    ).round(1)
-    tops_view = tops[["Občina", base_weight_col, "Top trg", "Top trg delež (%)"]].copy()
-    tops_view = tops_view.sort_values(base_weight_col, ascending=False, na_position="last")
-    st.dataframe(tops_view, use_container_width=True, hide_index=True)
+    with growth_tab:
+        render_market_growth_distribution(
+            selected_group=selected_group,
+            group_col=group_col,
+            mode=mode,
+            growth_numeric_df=(
+                ctx.market_growth_numeric_df[ctx.market_growth_numeric_df[group_col].notna()].copy()
+                if ctx.market_growth_numeric_df is not None and group_col in ctx.market_growth_numeric_df.columns
+                else None
+            ),
+        )

@@ -1,4 +1,6 @@
 import hashlib
+from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -32,18 +34,36 @@ from tourism_dashboard.paths import BASE_DIR, DATA_DIR, LOGOS_DIR, first_existin
 from tourism_dashboard.ui import render_market_structure, render_view
 
 
-def load_source_dataframe(uploaded_file, default_path):
+def load_optional_sheet_from_bytes(raw_bytes: bytes, sheet_name: str):
+    try:
+        return load_excel_from_bytes(raw_bytes, sheet_name=sheet_name)
+    except Exception:
+        return None
+
+
+def load_optional_sheet_from_path(path: Path, sheet_name: str):
+    try:
+        return load_excel_from_path(str(path), sheet_name=sheet_name)
+    except Exception:
+        return None
+
+
+def load_source_dataframes(uploaded_file: Any, default_path: Path | None):
     if uploaded_file is not None:
         raw_bytes = uploaded_file.getvalue()
         signature = f"upload:{hashlib.md5(raw_bytes).hexdigest()}"
-        return signature, load_excel_from_bytes(raw_bytes)
+        main_df = load_excel_from_bytes(raw_bytes, sheet_name="Skupna Tabela")
+        growth_df = load_optional_sheet_from_bytes(raw_bytes, "Rast prenočitev po trgih")
+        return signature, main_df, growth_df
 
     if default_path is None or not default_path.exists():
-        return None, None
+        return None, None, None
 
     stat = default_path.stat()
     signature = f"path:{default_path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
-    return signature, load_excel_from_path(str(default_path))
+    main_df = load_excel_from_path(str(default_path), sheet_name="Skupna Tabela")
+    growth_df = load_optional_sheet_from_path(default_path, "Rast prenočitev po trgih")
+    return signature, main_df, growth_df
 
 
 st.set_page_config(
@@ -75,7 +95,7 @@ if xlsx_file is None and (default_path is None or not default_path.exists()):
     )
     st.stop()
 
-source_signature, raw_df = load_source_dataframe(xlsx_file, default_path)
+source_signature, raw_df, raw_market_growth_df = load_source_dataframes(xlsx_file, default_path)
 if raw_df is None or source_signature is None:
     st.error("Excela ni bilo mogoče naložiti.")
     st.stop()
@@ -91,6 +111,23 @@ cached_bundle = st.session_state.get(data_bundle_key)
 if cached_bundle is None or cached_bundle.get("signature") != source_signature:
     df = raw_df.copy()
     df["__obcina_norm__"] = df["Občine"].apply(normalize_name)
+    market_growth_numeric_df = None
+    if raw_market_growth_df is not None and not raw_market_growth_df.empty:
+        market_growth_df = raw_market_growth_df.copy()
+        if "Občine" in market_growth_df.columns:
+            market_growth_df["__obcina_norm__"] = market_growth_df["Občine"].apply(normalize_name)
+        growth_meta_cols = {
+            "Občine",
+            "__obcina_norm__",
+            "Tip območja",
+            "SLOVENIJA",
+            "Makro destinacije",
+            "Perspektivne destinacije",
+            "Vodilne destinacije",
+            "Turistična regija",
+        }
+        growth_value_cols = [column for column in market_growth_df.columns if column not in growth_meta_cols]
+        market_growth_numeric_df = build_numeric_dataframe(market_growth_df, growth_value_cols)
 
     views = []
     for title, wanted in VIEW_CANDIDATES:
@@ -118,19 +155,19 @@ if cached_bundle is None or cached_bundle.get("signature") != source_signature:
         "signature": source_signature,
         "df": df,
         "numeric_df": numeric_df,
+        "market_growth_numeric_df": market_growth_numeric_df,
         "views": views,
         "market_cols": market_cols,
         "indicator_cols": indicator_cols,
-        "meta_cols": meta_cols,
     }
     st.session_state[data_bundle_key] = cached_bundle
 
 df = cached_bundle["df"]
 numeric_df = cached_bundle["numeric_df"]
+market_growth_numeric_df = cached_bundle["market_growth_numeric_df"]
 views = cached_bundle["views"]
 market_cols = cached_bundle["market_cols"]
 indicator_cols = cached_bundle["indicator_cols"]
-meta_cols = cached_bundle["meta_cols"]
 
 default_geojson_path = first_existing(
     DATA_DIR / GEOJSON_FILENAME,
@@ -148,13 +185,13 @@ grouped_indicators = load_indicator_groups(mapping_path)
 ctx = DashboardContext(
     df=df,
     numeric_df=numeric_df,
+    market_growth_numeric_df=market_growth_numeric_df,
     geojson_obj=geojson_obj,
     geojson_name_prop=geojson_name_prop,
     grouped_indicators=grouped_indicators,
     market_cols=market_cols,
     indicator_cols=indicator_cols,
     dashboard_mode=dashboard_mode,
-    meta_cols=meta_cols,
 )
 
 tab_kazalniki, tab_trgi = st.tabs(["Kazalniki", "Struktura prenočitev po trgih"])
