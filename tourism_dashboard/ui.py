@@ -48,7 +48,9 @@ from tourism_dashboard.formatting import (
 )
 from tourism_dashboard.helpers import get_secret_value, shorten_label, col_for_year
 from tourism_dashboard.maps import (
+    MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE,
     build_region_geojson_from_municipalities,
+    build_simplified_municipality_geojson,
     cache_key_for_municipalities_map,
     cache_key_for_regions_map,
     render_map_municipalities,
@@ -347,6 +349,14 @@ def _regions_geojson_session_cache() -> dict[str, dict[str, Any] | None]:
     if not isinstance(cache, dict):
         cache = {}
         st.session_state["_regions_geojson_cache"] = cache
+    return cast(dict[str, dict[str, Any] | None], cache)
+
+
+def _municipal_display_geojson_session_cache() -> dict[str, dict[str, Any] | None]:
+    cache = st.session_state.get("_municipal_display_geojson_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state["_municipal_display_geojson_cache"] = cache
     return cast(dict[str, dict[str, Any] | None], cache)
 
 
@@ -859,11 +869,24 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     region_agg = compute_region_aggregates(numeric_df, regions, agg_needed, AGG_RULES, group_col=group_col)
     region_agg_by_group = region_agg.set_index(group_col)
     region_to_value_map = dict(zip(region_agg[group_col], region_agg[map_indicator]))
+    data_signature = cast(str, getattr(ctx, "data_signature"))
+    geojson_signature = cast(str | None, getattr(ctx, "geojson_signature", None))
+
+    display_geojson_obj = ctx.geojson_obj
+    if ctx.geojson_obj is not None:
+        display_geojson_cache_key = (
+            f"{geojson_signature or 'no_geojson'}|municipal_display|"
+            f"{MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE}"
+        )
+        display_geojson_obj = _municipal_display_geojson_session_cache().get(display_geojson_cache_key)
+        if display_geojson_obj is None:
+            display_geojson_obj = build_simplified_municipality_geojson(ctx.geojson_obj)
+            _municipal_display_geojson_session_cache()[display_geojson_cache_key] = display_geojson_obj
 
     regions_geojson = None
     if selected_region == "Vsa območja" and ctx.geojson_obj and ctx.geojson_name_prop:
         regions_geojson_cache_key = (
-            f"{ctx.data_signature}|{ctx.geojson_signature or 'no_geojson'}|{group_col}"
+            f"{data_signature}|{geojson_signature or 'no_geojson'}|{group_col}"
         )
         regions_geojson = _regions_geojson_session_cache().get(regions_geojson_cache_key)
         if regions_geojson is None:
@@ -1011,7 +1034,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         "meje občin ter deleži znotraj območja. Dodan je tudi delež Občine glede "
         "na območje (kjer je smiselno)."
         )
-        if ctx.geojson_obj is None or ctx.geojson_name_prop is None:
+        if display_geojson_obj is None or ctx.geojson_name_prop is None:
             st.info("Za zemljevid naloži občinski GeoJSON (npr. `si.json`).")
         else:
             if selected_region == "Vsa območja":
@@ -1025,15 +1048,15 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                         for municipality, region in municipality_to_region.items()
                     }
                     render_map_municipalities(
-                        ctx.geojson_obj,
+                        display_geojson_obj,
                         ctx.geojson_name_prop,
                         set(municipality_to_region.keys()),
                         muni_region_values,
                         indicator_label=map_indicator,
                         height=680,
                         cache_key=cache_key_for_municipalities_map(
-                            data_signature=ctx.data_signature,
-                            geojson_signature=ctx.geojson_signature,
+                            data_signature=data_signature,
+                            geojson_signature=geojson_signature,
                             group_col=group_col,
                             selected_region="__all_regions_fallback__",
                             indicator_label=map_indicator,
@@ -1048,8 +1071,8 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                         group_col=group_col,
                         height=780,
                         cache_key=cache_key_for_regions_map(
-                            data_signature=ctx.data_signature,
-                            geojson_signature=ctx.geojson_signature,
+                            data_signature=data_signature,
+                            geojson_signature=geojson_signature,
                             group_col=group_col,
                             indicator_label=map_indicator,
                             height=780,
@@ -1062,15 +1085,15 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                     for municipality, value in zip(region_df["__obcina_norm__"], region_df[map_indicator])
                 }
                 render_map_municipalities(
-                    ctx.geojson_obj,
+                    display_geojson_obj,
                     ctx.geojson_name_prop,
                     municipalities_in_region,
                     municipality_to_value,
                     indicator_label=map_indicator,
                     height=780,
                     cache_key=cache_key_for_municipalities_map(
-                        data_signature=ctx.data_signature,
-                        geojson_signature=ctx.geojson_signature,
+                        data_signature=data_signature,
+                        geojson_signature=geojson_signature,
                         group_col=group_col,
                         selected_region=selected_region,
                         indicator_label=map_indicator,

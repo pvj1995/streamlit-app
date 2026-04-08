@@ -12,6 +12,8 @@ from tourism_dashboard.config import SLO_BOUNDS
 from tourism_dashboard.formatting import format_indicator_value_map
 from tourism_dashboard.helpers import normalize_name
 
+MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE = 0.00010
+
 
 if TYPE_CHECKING:
     import folium
@@ -82,6 +84,29 @@ def build_region_geojson_from_municipalities(
         return None
 
 
+@st.cache_data(show_spinner=False)
+def build_simplified_municipality_geojson(
+    geojson_obj: dict[str, Any],
+    tolerance: float = MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE,
+) -> dict[str, Any] | None:
+    if gpd is None or geojson_obj is None:
+        return geojson_obj
+    try:
+        gpd_module = gpd
+        gdf = gpd_module.GeoDataFrame.from_features(geojson_obj.get("features", []))
+        if gdf.empty:
+            return geojson_obj
+        if gdf.crs is None:
+            gdf = gdf.set_crs(4326)
+        gdf["geometry"] = gdf["geometry"].simplify(
+            tolerance=tolerance,
+            preserve_topology=True,
+        )
+        return json.loads(gdf.to_json())
+    except Exception:
+        return geojson_obj
+
+
 def palette(value: float | None, vmin: float, vmax: float) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "#cccccc"
@@ -142,13 +167,11 @@ def cache_key_for_municipalities_map(
     )
 
 
-@st.cache_data(show_spinner=False)
 def build_regions_map_html(
     regions_geojson: dict[str, Any],
     region_to_value: dict[str, float],
     indicator_label: str,
     group_col: str,
-    height: int = 680,
 ) -> str | None:
     if folium is None or regions_geojson is None:
         return None
@@ -223,7 +246,6 @@ def render_map_regions(
             region_to_value=region_to_value,
             indicator_label=indicator_label,
             group_col=group_col,
-            height=height,
         )
         if cache_key is not None and html is not None:
             _map_html_cache()[cache_key] = html
@@ -233,14 +255,12 @@ def render_map_regions(
     components.html(html, height=height, scrolling=False)
 
 
-@st.cache_data(show_spinner=False)
 def build_municipalities_map_html(
     geojson_obj: dict[str, Any] | None,
     name_prop: str,
     municipalities_in_region: set[str],
     municipality_to_value: dict[str, float],
     indicator_label: str = "Vrednost",
-    height: int = 680,
 ) -> str | None:
     if folium is None or geojson_obj is None:
         return None
@@ -344,7 +364,6 @@ def render_map_municipalities(
             municipalities_in_region=municipalities_in_region,
             municipality_to_value=municipality_to_value,
             indicator_label=indicator_label,
-            height=height,
         )
         if cache_key is not None and html is not None:
             _map_html_cache()[cache_key] = html
