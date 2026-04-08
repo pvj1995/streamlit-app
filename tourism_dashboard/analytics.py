@@ -567,7 +567,8 @@ def compute_market_structure_for_subset(
         return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
 
     total_weights = subset[base_weight_col].astype(float)
-    denominator = float(np.nansum(total_weights.values))
+    total_weights_array = total_weights.to_numpy(dtype=float, copy=False)
+    denominator = float(np.nansum(total_weights_array))
     if not np.isfinite(denominator) or denominator <= 0:
         return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
 
@@ -577,12 +578,14 @@ def compute_market_structure_for_subset(
         mask = (~series.isna()) & (~total_weights.isna()) & (total_weights > 0)
         if not mask.any():
             continue
+        weighted_values_array = (series[mask] * total_weights[mask]).to_numpy(dtype=float, copy=False)
+        masked_weights_array = total_weights[mask].to_numpy(dtype=float, copy=False)
         rows.append(
             {
                 "Trg": label,
                 "Delež": float(
-                    np.nansum((series[mask] * total_weights[mask]).values)
-                    / np.nansum(total_weights[mask].values)
+                    np.nansum(weighted_values_array)
+                    / np.nansum(masked_weights_array)
                 ),
             }
         )
