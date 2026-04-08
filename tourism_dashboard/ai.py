@@ -405,7 +405,7 @@ def generate_region_ai_commentary(
     payload = {
         "model": model,
         "temperature": 0.3,
-        "max_output_tokens": 2000,
+        "max_output_tokens": 2500,
         "input": [
             {
                 "role": "system",
