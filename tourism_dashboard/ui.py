@@ -754,10 +754,6 @@ def render_region_top_bottom_and_ai(
         "Smer kazalnika",
         "Vrednost območja", 
         "Osnova (Slovenija)", 
-        "Metoda primerjave", 
-        "Odstopanje_raw",
-        "Odstopanje_aligned_raw",
-        "Rangirni_odmik_raw",
         "Enota odstopanja",]
 
     for tab, section in zip(group_tabs, group_sections):
