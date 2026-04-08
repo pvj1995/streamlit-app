@@ -13,11 +13,13 @@ from tourism_dashboard.formatting import format_indicator_value_map
 from tourism_dashboard.helpers import normalize_name
 
 MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE = 0.00010
+REGION_DISPLAY_SIMPLIFY_TOLERANCE = 0.0005
 
 
 if TYPE_CHECKING:
     import folium
     import geopandas as gpd
+    from shapely.geometry import MultiPolygon, Polygon
 else:
     try:
         import folium
@@ -28,6 +30,12 @@ else:
         import geopandas as gpd
     except Exception:
         gpd = None
+
+    try:
+        from shapely.geometry import MultiPolygon, Polygon
+    except Exception:
+        MultiPolygon = None
+        Polygon = None
 
 
 def get_geojson_name_prop(
@@ -45,6 +53,18 @@ def get_geojson_name_prop(
         if candidate in sample_props:
             return candidate
     return list(sample_props.keys())[0]
+
+
+def _remove_polygon_holes(geometry: Any) -> Any:
+    if geometry is None or Polygon is None or MultiPolygon is None:
+        return geometry
+    if isinstance(geometry, Polygon):
+        return Polygon(geometry.exterior)
+    if isinstance(geometry, MultiPolygon):
+        return MultiPolygon(
+            [Polygon(polygon.exterior) for polygon in geometry.geoms if not polygon.is_empty]
+        )
+    return geometry
 
 
 @st.cache_data(show_spinner=False)
@@ -73,9 +93,13 @@ def build_region_geojson_from_municipalities(
         reg_gdf = gdf.dissolve(by=group_col, as_index=False)
         try:
             reg_gdf["geometry"] = reg_gdf["geometry"].simplify(
-                tolerance=0.0005,
+                tolerance=REGION_DISPLAY_SIMPLIFY_TOLERANCE,
                 preserve_topology=True,
             )
+        except Exception:
+            pass
+        try:
+            reg_gdf["geometry"] = reg_gdf["geometry"].apply(_remove_polygon_holes)
         except Exception:
             pass
 
@@ -137,14 +161,12 @@ def cache_key_for_regions_map(
     geojson_signature: str | None,
     group_col: str,
     indicator_label: str,
-    height: int,
 ) -> str:
     return "regions:" + _cache_key_digest(
         data_signature,
         geojson_signature or "no_geojson",
         group_col,
         indicator_label,
-        height,
     )
 
 
@@ -155,7 +177,6 @@ def cache_key_for_municipalities_map(
     group_col: str,
     selected_region: str,
     indicator_label: str,
-    height: int,
 ) -> str:
     return "municipalities:" + _cache_key_digest(
         data_signature,
@@ -163,7 +184,6 @@ def cache_key_for_municipalities_map(
         group_col,
         selected_region,
         indicator_label,
-        height,
     )
 
 
@@ -237,22 +257,15 @@ def render_map_regions(
     height: int = 680,
     cache_key: str | None = None,
 ) -> None:
-    html = None
-    if cache_key is not None:
-        html = _map_html_cache().get(cache_key)
-    if html is None:
-        html = build_regions_map_html(
+    def build_html() -> str | None:
+        return build_regions_map_html(
             regions_geojson=regions_geojson,
             region_to_value=region_to_value,
             indicator_label=indicator_label,
             group_col=group_col,
         )
-        if cache_key is not None and html is not None:
-            _map_html_cache()[cache_key] = html
-    if html is None:
-        st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
-        return
-    components.html(html, height=height, scrolling=False)
+
+    _render_cached_map(cache_key=cache_key, height=height, build_html=build_html)
 
 
 def build_municipalities_map_html(
@@ -345,6 +358,25 @@ def build_municipalities_map_html(
     return map_obj._repr_html_()
 
 
+def _render_cached_map(
+    *,
+    cache_key: str | None,
+    height: int,
+    build_html: Any,
+) -> None:
+    html = None
+    if cache_key is not None:
+        html = _map_html_cache().get(cache_key)
+    if html is None:
+        html = build_html()
+        if cache_key is not None and html is not None:
+            _map_html_cache()[cache_key] = html
+    if html is None:
+        st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
+        return
+    components.html(html, height=height, scrolling=False)
+
+
 def render_map_municipalities(
     geojson_obj: dict[str, Any] | None,
     name_prop: str,
@@ -354,20 +386,13 @@ def render_map_municipalities(
     height: int = 680,
     cache_key: str | None = None,
 ) -> None:
-    html = None
-    if cache_key is not None:
-        html = _map_html_cache().get(cache_key)
-    if html is None:
-        html = build_municipalities_map_html(
+    def build_html() -> str | None:
+        return build_municipalities_map_html(
             geojson_obj=geojson_obj,
             name_prop=name_prop,
             municipalities_in_region=municipalities_in_region,
             municipality_to_value=municipality_to_value,
             indicator_label=indicator_label,
         )
-        if cache_key is not None and html is not None:
-            _map_html_cache()[cache_key] = html
-    if html is None:
-        st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
-        return
-    components.html(html, height=height, scrolling=False)
+
+    _render_cached_map(cache_key=cache_key, height=height, build_html=build_html)
