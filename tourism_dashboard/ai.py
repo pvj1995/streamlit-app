@@ -392,7 +392,7 @@ def generate_region_ai_commentary(
         "3.1. Struktura in gibanje prenočitev po skupinah trgov\n"
         "4. Ekonomsko-poslovni kazalniki turistične dejavnosti\n"
         "5 konkretnih priporočil\n"
-        "2) Pri poglavjih 1, 2, 3 in 4 jasno loči podnaslova Prednosti in Tveganja. Napiši maksimalno 3 tveganja in 3 prednosti\n"
+        "2) Pri poglavjih 1, 2, 3 in 4 jasno loči podnaslova Prednosti in Tveganja ter pri teh poglavjih napiši maksimalno 3 tveganja in 3 prednosti\n"
         "3) V podpoglavju 3.1 analiziraj strukturo trgov v zadnjem opazovanem letu ter komentiraj rast posameznih trgov "
         "glede na predhodno leto in glede na leto 2019.\n"
         "4) V priporočilih obvezno dodaj vsaj eno priporočilo za upravljanje strukture trgov v kratkoročnem in dolgoročnem obdobju "
