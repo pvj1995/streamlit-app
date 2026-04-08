@@ -17,6 +17,8 @@ from tourism_dashboard.ai import (
 )
 from tourism_dashboard.analytics import (
     build_top_bottom_group_sections,
+    build_market_ai_context,
+    compute_market_structure_for_subset,
     compute_region_aggregates,
     compute_market_growth_for_subset,
     aggregate_indicator_with_rules,
@@ -413,6 +415,10 @@ def normalize_market_display_label(label: str) -> str:
     return mapping.get(str(label).strip(), str(label).strip())
 
 
+def shorten_market_axis_label(label: str) -> str:
+    return str(label).split("(", 1)[0].strip()
+
+
 def format_growth_label(value: float) -> str:
     if pd.isna(value):
         return "—"
@@ -431,7 +437,7 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
 
     chart_df["Trg"] = chart_df["Trg"].apply(normalize_market_display_label)
     chart_df = chart_df.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
-    chart_df["Trg_chart"] = chart_df["Trg"].apply(wrap_market_chart_label)
+    chart_df["Trg_chart"] = chart_df["Trg"].apply(shorten_market_axis_label).apply(wrap_market_chart_label)
     chart_df["Rast_prikaz"] = chart_df["Rast_raw"]
     chart_df["Rast_label"] = chart_df["Rast_raw"].apply(format_growth_label)
 
@@ -449,11 +455,11 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
         color="Trg",
         color_discrete_map=MARKET_COLOR_MAP,
         text="Rast_label",
+        custom_data=["Trg", "Rast_label"],
     )
     fig.update_traces(
         cliponaxis=False,
         textposition="outside",
-        customdata=chart_df[["Trg", "Rast_label"]].values,
         hovertemplate="<b>%{customdata[0]}</b><br>Rast: %{customdata[1]}<extra></extra>",
     )
     fig.update_layout(
@@ -499,42 +505,22 @@ def render_market_structure_distribution(
     df_source: pd.DataFrame,
     numeric_df: pd.DataFrame,
 ) -> None:
-    base_weight_col_template = "Prenočitve turistov SKUPAJ - 2024"
-    base_weight_col = col_for_year(base_weight_col_template, selected_year)
-
-    market_cols_year, market_labels_year = get_market_cols_for_year(df_source, selected_year)
-    required_cols = [base_weight_col] + market_cols_year
-    missing_cols = [column for column in required_cols if column not in numeric_df.columns]
-    if missing_cols:
-        st.warning("Manjkajo stolpci za izbrano leto: " + ", ".join(missing_cols))
-        return
-
     subset = numeric_df[numeric_df[group_col] == selected_group].copy()
     if subset.empty:
         st.info("Ni podatkov za izbrano območje.")
         return
 
-    total_weights = subset[base_weight_col].astype(float)
-    denominator = float(np.nansum(total_weights.values)) if base_weight_col in subset.columns else np.nan
-    if not denominator or np.isnan(denominator) or denominator <= 0:
+    structure_df = compute_market_structure_for_subset(
+        subset,
+        df_source=df_source,
+        selected_year=selected_year,
+    )
+    if structure_df.empty:
         st.warning("Manjkajo prenočitve SKUPAJ (utež) ali so 0, zato strukture ne morem izračunati.")
         return
 
-    values = {}
-    for column, label in zip(market_cols_year, market_labels_year):
-        series = subset[column].astype(float)
-        mask = (~series.isna()) & (~total_weights.isna()) & (total_weights > 0)
-        if mask.any():
-            values[label] = float(
-                np.nansum((series[mask] * total_weights[mask]).values)
-                / np.nansum(total_weights[mask].values)
-            )
-        else:
-            values[label] = np.nan
-
-    structure_df = pd.DataFrame({"Trg": list(values.keys()), "Delež": list(values.values())}).dropna()
-    total_share = float(structure_df["Delež"].sum()) if not structure_df.empty else 0.0
-    structure_df["Delež_norm"] = structure_df["Delež"] / total_share if total_share > 0 else np.nan
+    market_cols_year, market_labels_year = get_market_cols_for_year(df_source, selected_year)
+    base_weight_col = col_for_year("Prenočitve turistov SKUPAJ - 2024", selected_year)
 
     if mode == "Celotno območje":
         st.markdown(f"### {selected_group}")
@@ -741,6 +727,7 @@ def render_region_top_bottom_and_ai(
     selected_region: str,
     group_col: str,
     group_sections: list[dict[str, Any]],
+    market_ai_context: dict[str, Any] | None = None,
 ) -> None:
     if not group_sections:
         st.info("Za Top/Bottom analizo po skupinah ni na voljo dovolj kazalnikov.")
@@ -789,6 +776,7 @@ def render_region_top_bottom_and_ai(
 
     ai_signature_raw = json.dumps(
         {
+            "prompt_version": "market_structure_v1",
             "region": selected_region,
             "groups": [
                 {
@@ -798,6 +786,7 @@ def render_region_top_bottom_and_ai(
                 }
                 for section in group_sections
             ],
+            "market_context": market_ai_context,
         },
         ensure_ascii=False,
     )
@@ -816,7 +805,11 @@ def render_region_top_bottom_and_ai(
             }
         else:
             with st.spinner("Generiram komentar in priporočila..."):
-                ai_text, ai_source, ai_error = generate_region_ai_commentary(selected_region, group_sections)
+                ai_text, ai_source, ai_error = generate_region_ai_commentary(
+                    selected_region,
+                    group_sections,
+                    market_analysis=market_ai_context,
+                )
             st.session_state[ai_state_key] = {
                 "text": ai_text,
                 "source": ai_source,
@@ -1173,7 +1166,19 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                     )
 
     if selected_region != "Vsa območja":
-        render_region_top_bottom_and_ai(selected_region, group_col, group_sections)
+        market_ai_context = build_market_ai_context(
+            selected_group=selected_region,
+            group_col=group_col,
+            df_source=ctx.df,
+            numeric_df=numeric_df,
+            growth_numeric_df=ctx.market_growth_numeric_df,
+        )
+        render_region_top_bottom_and_ai(
+            selected_region,
+            group_col,
+            group_sections,
+            market_ai_context=market_ai_context,
+        )
 
 
 def render_market_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:

@@ -19,9 +19,11 @@ from tourism_dashboard.config import (
 from tourism_dashboard.formatting import (
     format_comparison_delta,
     format_indicator_value_map,
+    format_pct,
     get_indicator_gap_unit,
     is_lower_better,
 )
+from tourism_dashboard.helpers import col_for_year
 
 
 def get_agg_rule(
@@ -517,6 +519,16 @@ def get_market_cols_for_year(df: pd.DataFrame, year: int) -> tuple[list[str], li
     return cols, labels
 
 
+def get_available_market_years(df: pd.DataFrame) -> list[int]:
+    pattern = re.compile(rf"^{re.escape(MARKET_PREFIX)}.+?\s*-\s*((?:19|20)\d{{2}})\s*$")
+    years: set[int] = set()
+    for column in df.columns:
+        match = pattern.match(str(column))
+        if match:
+            years.add(int(match.group(1)))
+    return sorted(years)
+
+
 def get_market_overnight_cols_for_year(df: pd.DataFrame, year: int) -> tuple[list[str], list[str]]:
     pattern = re.compile(rf"^Število nočitev\s+{year}\s*-\s*(.+?)\s*$")
     cols = []
@@ -527,6 +539,154 @@ def get_market_overnight_cols_for_year(df: pd.DataFrame, year: int) -> tuple[lis
             cols.append(column)
             labels.append(match.group(1).strip())
     return cols, labels
+
+
+def get_available_market_overnight_years(df: pd.DataFrame) -> list[int]:
+    pattern = re.compile(r"^Število nočitev\s+((?:19|20)\d{2})\s*-\s*(.+?)\s*$")
+    years: set[int] = set()
+    for column in df.columns:
+        match = pattern.match(str(column))
+        if match:
+            years.add(int(match.group(1)))
+    return sorted(years)
+
+
+def compute_market_structure_for_subset(
+    subset: pd.DataFrame,
+    *,
+    df_source: pd.DataFrame,
+    selected_year: int,
+) -> pd.DataFrame:
+    if subset.empty:
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+
+    base_weight_col = col_for_year("Prenočitve turistov SKUPAJ - 2024", selected_year)
+    market_cols_year, market_labels_year = get_market_cols_for_year(df_source, selected_year)
+    required_cols = [base_weight_col] + market_cols_year
+    if any(column not in subset.columns for column in required_cols):
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+
+    total_weights = subset[base_weight_col].astype(float)
+    denominator = float(np.nansum(total_weights.values))
+    if not np.isfinite(denominator) or denominator <= 0:
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+
+    rows: list[dict[str, Any]] = []
+    for column, label in zip(market_cols_year, market_labels_year):
+        series = subset[column].astype(float)
+        mask = (~series.isna()) & (~total_weights.isna()) & (total_weights > 0)
+        if not mask.any():
+            continue
+        rows.append(
+            {
+                "Trg": label,
+                "Delež": float(
+                    np.nansum((series[mask] * total_weights[mask]).values)
+                    / np.nansum(total_weights[mask].values)
+                ),
+            }
+        )
+
+    structure_df = pd.DataFrame(rows).dropna()
+    if structure_df.empty:
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+
+    total_share = float(structure_df["Delež"].sum())
+    structure_df["Delež_norm"] = structure_df["Delež"] / total_share if total_share > 0 else np.nan
+    return structure_df
+
+
+def build_market_ai_context(
+    *,
+    selected_group: str,
+    group_col: str,
+    df_source: pd.DataFrame,
+    numeric_df: pd.DataFrame,
+    growth_numeric_df: pd.DataFrame | None,
+) -> dict[str, Any] | None:
+    subset = numeric_df[numeric_df[group_col] == selected_group].copy()
+    if subset.empty:
+        return None
+
+    market_years = get_available_market_years(df_source)
+    if not market_years:
+        return None
+
+    latest_year = max(market_years)
+    structure_df = compute_market_structure_for_subset(
+        subset,
+        df_source=df_source,
+        selected_year=latest_year,
+    )
+    structure_rows = []
+    if not structure_df.empty:
+        structure_df = structure_df.sort_values("Delež_norm", ascending=False).reset_index(drop=True)
+        structure_rows = [
+            {
+                "Trg": str(row["Trg"]),
+                "Delež_norm_raw": float(row["Delež_norm"]),
+                "Delež_norm": format_pct(float(row["Delež_norm"]) * 100.0, 1),
+            }
+            for _, row in structure_df.iterrows()
+            if pd.notna(row["Delež_norm"])
+        ]
+
+    growth_payloads: dict[str, dict[str, Any]] = {}
+    if growth_numeric_df is not None and group_col in growth_numeric_df.columns:
+        growth_subset = growth_numeric_df[growth_numeric_df[group_col] == selected_group].copy()
+        growth_years = get_available_market_overnight_years(growth_subset)
+        if not growth_subset.empty and latest_year in growth_years:
+            candidate_base_years = [year for year in growth_years if year < latest_year]
+            if candidate_base_years:
+                previous_year = max(candidate_base_years)
+                growth_previous_df = compute_market_growth_for_subset(
+                    growth_subset,
+                    base_year=previous_year,
+                    target_year=latest_year,
+                )
+                if not growth_previous_df.empty:
+                    growth_previous_df = growth_previous_df.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
+                    growth_payloads[f"{latest_year}/{previous_year}"] = {
+                        "period": f"{latest_year}/{previous_year}",
+                        "rows": [
+                            {
+                                "Trg": str(row["Trg"]),
+                                "Rast_raw": float(row["Rast_raw"]),
+                                "Rast": format_pct(float(row["Rast_raw"]) * 100.0, 1),
+                            }
+                            for _, row in growth_previous_df.iterrows()
+                            if pd.notna(row["Rast_raw"])
+                        ],
+                    }
+
+                if 2019 in candidate_base_years and previous_year != 2019:
+                    growth_2019_df = compute_market_growth_for_subset(
+                        growth_subset,
+                        base_year=2019,
+                        target_year=latest_year,
+                    )
+                    if not growth_2019_df.empty:
+                        growth_2019_df = growth_2019_df.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
+                        growth_payloads[f"{latest_year}/2019"] = {
+                            "period": f"{latest_year}/2019",
+                            "rows": [
+                                {
+                                    "Trg": str(row["Trg"]),
+                                    "Rast_raw": float(row["Rast_raw"]),
+                                    "Rast": format_pct(float(row["Rast_raw"]) * 100.0, 1),
+                                }
+                                for _, row in growth_2019_df.iterrows()
+                                if pd.notna(row["Rast_raw"])
+                            ],
+                        }
+                elif 2019 in candidate_base_years and previous_year == 2019:
+                    growth_payloads.setdefault(f"{latest_year}/2019", growth_payloads[f"{latest_year}/{previous_year}"])
+
+    return {
+        "latest_year": latest_year,
+        "structure_rows": structure_rows,
+        "growth_periods": growth_payloads,
+    }
 
 
 def compute_market_growth_for_subset(

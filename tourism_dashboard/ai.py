@@ -173,7 +173,96 @@ def grouped_rows_to_prompt_text(group_sections: List[Dict[str, Any]]) -> str:
     return "\n\n".join(blocks)
 
 
-def fallback_region_commentary(region_name: str, group_sections: List[Dict[str, Any]]) -> str:
+def normalize_market_label_for_prompt(label: str) -> str:
+    mapping = {
+        "DACH trgi": "DACH trgi (nemško govoreči trgi: D, A in CH)",
+    }
+    return mapping.get(str(label).strip(), str(label).strip())
+
+
+def market_rows_to_prompt_lines(
+    rows: List[Dict[str, Any]],
+    *,
+    value_key: str,
+    limit: int | None = None,
+) -> str:
+    if not rows:
+        return "- Ni podatkov."
+
+    lines = []
+    for row in rows[: limit or len(rows)]:
+        market = normalize_market_label_for_prompt(str(row.get("Trg", "—")))
+        value = row.get(value_key, "—")
+        lines.append(f"- {market}: {value}")
+    return "\n".join(lines)
+
+
+def market_analysis_to_prompt_text(market_analysis: Dict[str, Any] | None) -> str:
+    if not market_analysis:
+        return "Ni dodatnih podatkov o strukturi in gibanju prenočitev po trgih."
+
+    latest_year = market_analysis.get("latest_year", "zadnje leto")
+    structure_lines = market_rows_to_prompt_lines(
+        cast(List[Dict[str, Any]], market_analysis.get("structure_rows", [])),
+        value_key="Delež_norm",
+    )
+
+    growth_periods = cast(Dict[str, Dict[str, Any]], market_analysis.get("growth_periods", {}))
+    growth_blocks = []
+    for period in sorted(growth_periods.keys(), reverse=True):
+        growth_rows = cast(List[Dict[str, Any]], growth_periods[period].get("rows", []))
+        growth_blocks.append(
+            f"Rast prenočitev po trgih ({period}):\n"
+            f"{market_rows_to_prompt_lines(growth_rows, value_key='Rast')}"
+        )
+
+    growth_text = "\n\n".join(growth_blocks) if growth_blocks else "Ni podatkov o rasti po trgih."
+    return (
+        f"Struktura prenočitev po trgih v letu {latest_year}:\n"
+        f"{structure_lines}\n\n"
+        f"{growth_text}"
+    )
+
+
+def build_market_section_markdown(market_analysis: Dict[str, Any] | None) -> str:
+    if not market_analysis:
+        return ""
+    return (
+        "**3.1. Struktura in gibanje prenočitev po skupinah trgov**\n"
+        f"{market_analysis_to_prompt_text(market_analysis)}"
+    )
+
+
+def ensure_market_section(text: str, market_analysis: Dict[str, Any] | None) -> str:
+    if not market_analysis:
+        return text
+
+    lower_text = text.lower()
+    if "3.1. struktura in gibanje prenočitev po skupinah trgov" in lower_text:
+        return text
+
+    market_section = build_market_section_markdown(market_analysis)
+    if not market_section:
+        return text
+
+    insertion_markers = [
+        "\n**4. Ekonomsko-poslovni kazalniki turistične dejavnosti**",
+        "\n4. Ekonomsko-poslovni kazalniki turistične dejavnosti",
+        "\n**4 konkretna priporočila**",
+        "\n4 konkretna priporočila",
+    ]
+    for marker in insertion_markers:
+        if marker in text:
+            return text.replace(marker, f"\n\n{market_section}\n\n{marker.lstrip()}", 1)
+
+    return f"{text.rstrip()}\n\n{market_section}"
+
+
+def fallback_region_commentary(
+    region_name: str,
+    group_sections: List[Dict[str, Any]],
+    market_analysis: Dict[str, Any] | None = None,
+) -> str:
     summary_parts = []
     for section in group_sections:
         group_name = section.get("group", "Neznana skupina")
@@ -182,13 +271,19 @@ def fallback_region_commentary(region_name: str, group_sections: List[Dict[str, 
         summary_parts.append(f"{group_name}: prednosti {top_names}; tveganja {bottom_names}")
 
     summary_text = " | ".join(summary_parts) if summary_parts else "Ni dovolj podatkov za skupinsko primerjavo."
+    market_context_text = market_analysis_to_prompt_text(market_analysis)
     return (
         f"**Povzetek za območje {region_name}:** {summary_text}. "
         f"Primerjava je glede na slovensko osnovo.\n\n"
+        f"**3.1. Struktura in gibanje prenočitev po skupinah trgov**\n"
+        f"{market_context_text}\n\n"
         f"**Priporočila:**\n"
         f"1. Ukrepe določite ločeno po skupinah kazalnikov, ne samo na ravni celotnega območja.\n"
         f"2. Pri najslabših kazalnikih v vsaki skupini določite 2-3 ciljne ukrepe z nosilci in roki.\n"
-        f"3. Spremljajte napredek po skupinah in preverjajte, ali se slabši kazalniki približujejo slovenski osnovi."
+        f"3. Spremljajte napredek po skupinah in preverjajte, ali se slabši kazalniki približujejo slovenski osnovi.\n"
+        f"4. Upravljajte strukturo trgov ločeno kratkoročno in dolgoročno: kratkoročno krepiti bolj dostopne "
+        f"bližnje trge za stabilnost zasedenosti, dolgoročno pa razvijati bolj donosne in manj sezonsko občutljive "
+        f"trge, pri čemer pazite na preveliko odvisnost od enega samega izvora."
     )
 
 
@@ -262,32 +357,46 @@ def compute_retry_delay_seconds(resp: Any, attempt_index: int) -> float:
 def generate_region_ai_commentary(
     region_name: str,
     group_sections: List[Dict[str, Any]],
+    market_analysis: Dict[str, Any] | None = None,
 ) -> Tuple[str, str, Optional[str]]:
     api_key = get_secret_value("OPENAI_API_KEY")
     if not api_key or requests is None:
-        return fallback_region_commentary(region_name, group_sections), "fallback", None
+        return fallback_region_commentary(region_name, group_sections, market_analysis), "fallback", None
 
     requests_module = cast(Any, requests)
     model = get_secret_value("OPENAI_MODEL", "gpt-5.4")
     system_prompt = (
         "Si analitik regionalnega razvoja turizma. Uporabi samo podane "
-        "kazalnike in podaj kratko, praktično razlago ter priporočila."
+        "kazalnike in podaj kratko, praktično razlago ter priporočila. "
+        "Odgovor napiši v stabilni, jasno členjeni strukturi z navedenimi naslovi."
     )
     user_prompt = (
         f"Območje: {region_name}\n\n"
         f"Top/Bottom po skupinah kazalnikov:\n{grouped_rows_to_prompt_text(group_sections)}\n\n"
+        f"Struktura in gibanje prenočitev po skupinah trgov:\n{market_analysis_to_prompt_text(market_analysis)}\n\n"
         "Naloga:\n"
-        "1) Napiši kratek celosten komentar (5-7 stavkov), ki povzema stanje po vseh štirih skupinah kazalnikov.\n"
-        "2) Jasno loči, katere so glavne prednosti in katera tveganja izstopajo po posameznih skupinah.\n"
-        "3) Dodaj 4 konkretna priporočila za izboljšanje, pri čemer naj priporočila pokrijejo več skupin kazalnikov.\n"
-        "4) Uporabi samo podane podatke, brez izmišljenih razlag ali številk.\n"
-        "5) Piši v slovenščini, profesionalno, jedrnato."
+        "1) Uporabi točno naslednjo strukturo naslovov:\n"
+        "Kratek celosten komentar\n"
+        "1. Družbeni kazalniki\n"
+        "2. Okoljski kazalniki\n"
+        "3. Ekonomski nastanitveni in tržni kazalniki\n"
+        "3.1. Struktura in gibanje prenočitev po skupinah trgov\n"
+        "4. Ekonomsko-poslovni kazalniki turistične dejavnosti\n"
+        "4 konkretna priporočila\n"
+        "2) Pri poglavjih 1, 2, 3 in 4 jasno loči podnaslova Prednosti in Tveganja.\n"
+        "3) V podpoglavju 3.1 analiziraj strukturo trgov v zadnjem opazovanem letu ter komentiraj rast posameznih trgov "
+        "glede na predhodno leto in glede na leto 2019.\n"
+        "4) V priporočilih obvezno dodaj vsaj eno priporočilo za upravljanje strukture trgov v kratkoročnem in dolgoročnem obdobju "
+        "z vidika donosnosti in dosegljivosti. Pri tem lahko uporabiš splošno znano presojo o bližnjih, cestno dosegljivih trgih "
+        "v primerjavi z bolj oddaljenimi, praviloma letalsko odvisnimi trgi, vendar ne izmišljaj specifičnih številk ali virov.\n"
+        "5) Uporabi samo podane podatke, brez izmišljenih razlag ali številk.\n"
+        "6) Piši v slovenščini, profesionalno, jedrnato."
     )
 
     payload = {
         "model": model,
         "temperature": 0.3,
-        "max_output_tokens": 2000,
+        "max_output_tokens": 2500,
         "input": [
             {
                 "role": "system",
@@ -316,8 +425,12 @@ def generate_region_ai_commentary(
             if resp.status_code < 400:
                 text = extract_response_text(resp.json())
                 if not text:
-                    return fallback_region_commentary(region_name, group_sections), "fallback", "AI odgovor je bil prazen."
-                return text, "ai", None
+                    return (
+                        fallback_region_commentary(region_name, group_sections, market_analysis),
+                        "fallback",
+                        "AI odgovor je bil prazen.",
+                    )
+                return ensure_market_section(text, market_analysis), "ai", None
 
             message, err_type, err_code = extract_openai_error_fields(resp)
             if attempt < max_attempts - 1 and should_retry_openai_call(resp.status_code, err_type, err_code):
@@ -331,8 +444,8 @@ def generate_region_ai_commentary(
                 )
             else:
                 err = format_openai_http_error(resp)
-            return fallback_region_commentary(region_name, group_sections), "fallback", err
+            return fallback_region_commentary(region_name, group_sections, market_analysis), "fallback", err
     except Exception as exc:
-        return fallback_region_commentary(region_name, group_sections), "fallback", str(exc)
+        return fallback_region_commentary(region_name, group_sections, market_analysis), "fallback", str(exc)
 
-    return fallback_region_commentary(region_name, group_sections), "fallback", "AI klic se ni izvedel."
+    return fallback_region_commentary(region_name, group_sections, market_analysis), "fallback", "AI klic se ni izvedel."
