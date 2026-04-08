@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any, cast
 
@@ -92,6 +93,55 @@ def palette(value: float | None, vmin: float, vmax: float) -> str:
     return colors[sum(quantile > bound for bound in bins)]
 
 
+def _map_html_cache() -> dict[str, str]:
+    cache = st.session_state.get("_map_html_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state["_map_html_cache"] = cache
+    return cast(dict[str, str], cache)
+
+
+def _cache_key_digest(*parts: object) -> str:
+    raw = "||".join(str(part) for part in parts)
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def cache_key_for_regions_map(
+    *,
+    data_signature: str,
+    geojson_signature: str | None,
+    group_col: str,
+    indicator_label: str,
+    height: int,
+) -> str:
+    return "regions:" + _cache_key_digest(
+        data_signature,
+        geojson_signature or "no_geojson",
+        group_col,
+        indicator_label,
+        height,
+    )
+
+
+def cache_key_for_municipalities_map(
+    *,
+    data_signature: str,
+    geojson_signature: str | None,
+    group_col: str,
+    selected_region: str,
+    indicator_label: str,
+    height: int,
+) -> str:
+    return "municipalities:" + _cache_key_digest(
+        data_signature,
+        geojson_signature or "no_geojson",
+        group_col,
+        selected_region,
+        indicator_label,
+        height,
+    )
+
+
 @st.cache_data(show_spinner=False)
 def build_regions_map_html(
     regions_geojson: dict[str, Any],
@@ -162,14 +212,21 @@ def render_map_regions(
     indicator_label: str,
     group_col: str,
     height: int = 680,
+    cache_key: str | None = None,
 ) -> None:
-    html = build_regions_map_html(
-        regions_geojson=regions_geojson,
-        region_to_value=region_to_value,
-        indicator_label=indicator_label,
-        group_col=group_col,
-        height=height,
-    )
+    html = None
+    if cache_key is not None:
+        html = _map_html_cache().get(cache_key)
+    if html is None:
+        html = build_regions_map_html(
+            regions_geojson=regions_geojson,
+            region_to_value=region_to_value,
+            indicator_label=indicator_label,
+            group_col=group_col,
+            height=height,
+        )
+        if cache_key is not None and html is not None:
+            _map_html_cache()[cache_key] = html
     if html is None:
         st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
         return
@@ -275,15 +332,22 @@ def render_map_municipalities(
     municipality_to_value: dict[str, float],
     indicator_label: str = "Vrednost",
     height: int = 680,
+    cache_key: str | None = None,
 ) -> None:
-    html = build_municipalities_map_html(
-        geojson_obj=geojson_obj,
-        name_prop=name_prop,
-        municipalities_in_region=municipalities_in_region,
-        municipality_to_value=municipality_to_value,
-        indicator_label=indicator_label,
-        height=height,
-    )
+    html = None
+    if cache_key is not None:
+        html = _map_html_cache().get(cache_key)
+    if html is None:
+        html = build_municipalities_map_html(
+            geojson_obj=geojson_obj,
+            name_prop=name_prop,
+            municipalities_in_region=municipalities_in_region,
+            municipality_to_value=municipality_to_value,
+            indicator_label=indicator_label,
+            height=height,
+        )
+        if cache_key is not None and html is not None:
+            _map_html_cache()[cache_key] = html
     if html is None:
         st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
         return

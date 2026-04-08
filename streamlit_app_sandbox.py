@@ -48,6 +48,16 @@ def load_optional_sheet_from_path(path: Path, sheet_name: str):
         return None
 
 
+def get_geojson_signature(uploaded_file: Any, default_path: Path | None) -> str | None:
+    if uploaded_file is not None:
+        raw_bytes = uploaded_file.getvalue()
+        return f"upload:{hashlib.md5(raw_bytes).hexdigest()}"
+    if default_path is None or not default_path.exists():
+        return None
+    stat = default_path.stat()
+    return f"path:{default_path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+
+
 def load_source_dataframes(uploaded_file: Any, default_path: Path | None):
     if uploaded_file is not None:
         raw_bytes = uploaded_file.getvalue()
@@ -174,6 +184,7 @@ default_geojson_path = first_existing(
     BASE_DIR / GEOJSON_FILENAME,
 )
 geojson_obj = load_geojson_from_upload_or_file(geojson_file, default_geojson_path)
+geojson_signature = get_geojson_signature(geojson_file, default_geojson_path)
 geojson_name_prop = get_geojson_name_prop(geojson_obj) if geojson_obj else None
 
 mapping_path = first_existing(
@@ -183,10 +194,12 @@ mapping_path = first_existing(
 grouped_indicators = load_indicator_groups(mapping_path)
 
 ctx = DashboardContext(
+    data_signature=source_signature,
     df=df,
     numeric_df=numeric_df,
     market_growth_numeric_df=market_growth_numeric_df,
     geojson_obj=geojson_obj,
+    geojson_signature=geojson_signature,
     geojson_name_prop=geojson_name_prop,
     grouped_indicators=grouped_indicators,
     market_cols=market_cols,

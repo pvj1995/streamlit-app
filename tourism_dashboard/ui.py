@@ -49,6 +49,8 @@ from tourism_dashboard.formatting import (
 from tourism_dashboard.helpers import get_secret_value, shorten_label, col_for_year
 from tourism_dashboard.maps import (
     build_region_geojson_from_municipalities,
+    cache_key_for_municipalities_map,
+    cache_key_for_regions_map,
     render_map_municipalities,
     render_map_regions,
 )
@@ -338,6 +340,14 @@ def render_ranked_dataframe(
         ranked_df,
         **dataframe_kwargs,
     )
+
+
+def _regions_geojson_session_cache() -> dict[str, dict[str, Any] | None]:
+    cache = st.session_state.get("_regions_geojson_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        st.session_state["_regions_geojson_cache"] = cache
+    return cast(dict[str, dict[str, Any] | None], cache)
 
 
 def wrap_market_chart_label(label: str, width: int = 18) -> str:
@@ -852,12 +862,18 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
     regions_geojson = None
     if selected_region == "Vsa območja" and ctx.geojson_obj and ctx.geojson_name_prop:
-        regions_geojson = build_region_geojson_from_municipalities(
-            ctx.geojson_obj,
-            ctx.geojson_name_prop,
-            municipality_to_region,
-            group_col=group_col,
+        regions_geojson_cache_key = (
+            f"{ctx.data_signature}|{ctx.geojson_signature or 'no_geojson'}|{group_col}"
         )
+        regions_geojson = _regions_geojson_session_cache().get(regions_geojson_cache_key)
+        if regions_geojson is None:
+            regions_geojson = build_region_geojson_from_municipalities(
+                ctx.geojson_obj,
+                ctx.geojson_name_prop,
+                municipality_to_region,
+                group_col=group_col,
+            )
+            _regions_geojson_session_cache()[regions_geojson_cache_key] = regions_geojson
 
     group_sections = []
     if selected_region == "Vsa območja":
@@ -1015,6 +1031,14 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                         muni_region_values,
                         indicator_label=map_indicator,
                         height=680,
+                        cache_key=cache_key_for_municipalities_map(
+                            data_signature=ctx.data_signature,
+                            geojson_signature=ctx.geojson_signature,
+                            group_col=group_col,
+                            selected_region="__all_regions_fallback__",
+                            indicator_label=map_indicator,
+                            height=680,
+                        ),
                     )
                 else:
                     render_map_regions(
@@ -1023,6 +1047,13 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                         indicator_label=map_indicator,
                         group_col=group_col,
                         height=780,
+                        cache_key=cache_key_for_regions_map(
+                            data_signature=ctx.data_signature,
+                            geojson_signature=ctx.geojson_signature,
+                            group_col=group_col,
+                            indicator_label=map_indicator,
+                            height=780,
+                        ),
                     )
             else:
                 municipalities_in_region = set(region_df["__obcina_norm__"].tolist())
@@ -1037,6 +1068,14 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                     municipality_to_value,
                     indicator_label=map_indicator,
                     height=780,
+                    cache_key=cache_key_for_municipalities_map(
+                        data_signature=ctx.data_signature,
+                        geojson_signature=ctx.geojson_signature,
+                        group_col=group_col,
+                        selected_region=selected_region,
+                        indicator_label=map_indicator,
+                        height=780,
+                    ),
                 )
         show_shared_warning_if_needed_map(map_indicator)
 
