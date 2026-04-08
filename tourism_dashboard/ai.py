@@ -382,7 +382,7 @@ def generate_region_ai_commentary(
         "3. Ekonomski nastanitveni in tržni kazalniki\n"
         "3.1. Struktura in gibanje prenočitev po skupinah trgov\n"
         "4. Ekonomsko-poslovni kazalniki turistične dejavnosti\n"
-        "4 konkretna priporočila\n"
+        "5 konkretnih priporočil\n"
         "2) Pri poglavjih 1, 2, 3 in 4 jasno loči podnaslova Prednosti in Tveganja.\n"
         "3) V podpoglavju 3.1 analiziraj strukturo trgov v zadnjem opazovanem letu ter komentiraj rast posameznih trgov "
         "glede na predhodno leto in glede na leto 2019.\n"
