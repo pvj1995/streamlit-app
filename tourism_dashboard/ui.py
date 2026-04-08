@@ -795,7 +795,14 @@ def render_region_top_bottom_and_ai(
     ai_cache_key = ai_payload_hash
     ai_state_key = f"ai_comment_{group_col}_{selected_region}_{ai_signature}"
 
-    if ai_state_key not in st.session_state:
+    existing_ai_payload = st.session_state.get(ai_state_key, {})
+    existing_error_text = str(existing_ai_payload.get("error") or "").lower()
+    should_retry_timeout_fallback = (
+        existing_ai_payload.get("source") == "fallback"
+        and ("timed out" in existing_error_text or "read timeout" in existing_error_text)
+    )
+
+    if ai_state_key not in st.session_state or should_retry_timeout_fallback:
         cached_payload = get_cached_ai_commentary(ai_cache_key)
         if cached_payload:
             st.session_state[ai_state_key] = {

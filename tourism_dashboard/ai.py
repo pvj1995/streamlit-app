@@ -18,6 +18,11 @@ else:
         requests = None
 
 
+OPENAI_CONNECT_TIMEOUT_SECONDS = 10
+OPENAI_READ_TIMEOUT_SECONDS = 75
+OPENAI_MAX_ATTEMPTS = 3
+
+
 def get_ai_cache_connection() -> Tuple[Optional[Any], str]:
     connection_name: str = str(
         get_secret_value("AI_CACHE_CONNECTION_NAME", AI_CACHE_CONNECTION_NAME_DEFAULT)
@@ -354,6 +359,10 @@ def compute_retry_delay_seconds(resp: Any, attempt_index: int) -> float:
     return min(1.5 * (2 ** attempt_index), 20.0)
 
 
+def compute_exception_retry_delay_seconds(attempt_index: int) -> float:
+    return min(2.0 * (2 ** attempt_index), 15.0)
+
+
 def generate_region_ai_commentary(
     region_name: str,
     group_sections: List[Dict[str, Any]],
@@ -396,7 +405,7 @@ def generate_region_ai_commentary(
     payload = {
         "model": model,
         "temperature": 0.3,
-        "max_output_tokens": 2500,
+        "max_output_tokens": 2000,
         "input": [
             {
                 "role": "system",
@@ -410,17 +419,37 @@ def generate_region_ai_commentary(
     }
 
     try:
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            resp = requests_module.post(
-                "https://api.openai.com/v1/responses",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                data=json.dumps(payload),
-                timeout=35,
-            )
+        for attempt in range(OPENAI_MAX_ATTEMPTS):
+            try:
+                resp = requests_module.post(
+                    "https://api.openai.com/v1/responses",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    data=json.dumps(payload),
+                    timeout=(OPENAI_CONNECT_TIMEOUT_SECONDS, OPENAI_READ_TIMEOUT_SECONDS),
+                )
+            except Exception as exc:
+                request_exceptions = getattr(requests_module, "exceptions", None)
+                timeout_types = tuple(
+                    exception_type
+                    for exception_type in (
+                        getattr(request_exceptions, "Timeout", None),
+                        getattr(request_exceptions, "ReadTimeout", None),
+                        getattr(request_exceptions, "ConnectionError", None),
+                    )
+                    if exception_type is not None
+                )
+                is_retryable_exception = bool(timeout_types) and isinstance(exc, timeout_types)
+                if is_retryable_exception and attempt < OPENAI_MAX_ATTEMPTS - 1:
+                    time.sleep(compute_exception_retry_delay_seconds(attempt))
+                    continue
+                return (
+                    fallback_region_commentary(region_name, group_sections, market_analysis),
+                    "fallback",
+                    str(exc),
+                )
 
             if resp.status_code < 400:
                 text = extract_response_text(resp.json())
@@ -433,7 +462,7 @@ def generate_region_ai_commentary(
                 return ensure_market_section(text, market_analysis), "ai", None
 
             message, err_type, err_code = extract_openai_error_fields(resp)
-            if attempt < max_attempts - 1 and should_retry_openai_call(resp.status_code, err_type, err_code):
+            if attempt < OPENAI_MAX_ATTEMPTS - 1 and should_retry_openai_call(resp.status_code, err_type, err_code):
                 time.sleep(compute_retry_delay_seconds(resp, attempt))
                 continue
 
