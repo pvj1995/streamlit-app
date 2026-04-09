@@ -46,6 +46,7 @@ from tourism_dashboard.formatting import (
     format_pct,
     format_si_number,
     is_rate_like,
+    is_percent_like,
     make_localized_column_config,
 )
 from tourism_dashboard.helpers import get_secret_value, shorten_label, col_for_year
@@ -323,13 +324,13 @@ def render_ranked_dataframe(
     *,
     source_columns: dict[str, str] | None = None,
     width_overrides: dict[str, ColumnWidth] | None = None,
-    use_container_width: bool = True,
+    use_container_width: str = 'stretch',
     hide_index: bool = True,
     height: int | None = None,
 ) -> None:
     ranked_df = prepend_rank_column(df)
     dataframe_kwargs: dict[str, Any] = {
-        "use_container_width": use_container_width,
+        "width": use_container_width,
         "hide_index": hide_index,
         "column_config": ranked_column_config(
             ranked_df,
@@ -477,7 +478,7 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
         zeroline=True,
         zerolinewidth=1,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_market_growth_table(growth_df: pd.DataFrame) -> None:
@@ -548,7 +549,7 @@ def render_market_structure_distribution(
                 showlegend=True,
                 legend_title_text="Trgi",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         with table_col:
             st.markdown("**Tabela**")
@@ -610,7 +611,7 @@ def render_market_structure_distribution(
             showlegend=True,
             legend_title_text="Trgi",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with table_col:
         st.markdown("**Tabela**")
@@ -945,7 +946,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
         st.dataframe(
             show_df,
-            use_container_width=True,
+            width='stretch',
             height=260,
             hide_index=True,
             column_config=make_localized_column_config(show_df, width_overrides=comparison_widths),
@@ -968,11 +969,13 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         sl_total = df_slo_total_num.get(map_indicator, np.nan)
 
         share_si = np.nan
+        kpi_text_main = "Odstopanje od Slovenije"
+
         if (not is_rate_like(map_indicator)) and sl_total and not np.isnan(sl_total) and sl_total != 0:
             share_si = (region_total / sl_total) * 100.0
 
         if map_indicator in INDIKATORJI_Z_INDEKSI:
-            kpi_text_main = "Indeks s povprečjem v Sloveniji"
+            kpi_text_main = "Primerjalni indeks s Slovenijo"
             kpi_value_main = format_si_number(share_si, 1)
         else:
             kpi_text_main = "Delež v Sloveniji"
@@ -987,7 +990,24 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                     f"{kpi_text_main}: {kpi_value_main}",
                 )
             else:
-                st.metric(map_indicator, f"{format_indicator_value_map(map_indicator, region_total)}")
+                if is_percent_like(map_indicator):
+                    print(region_total - sl_total)
+                    kpi_text_main = "V primerjavi s Slovenijo"
+                    kpi_value_main = format_pct(((region_total - sl_total)*100), 1)
+                    print(kpi_value_main)
+                    st.metric(
+                        map_indicator, 
+                        f"{format_indicator_value_map(map_indicator, region_total)}",
+                        f"{kpi_text_main}: {kpi_value_main}"
+                        )
+                else:
+                    kpi_text_main = "V primerjavi s Slovenijo"
+                    kpi_value_main = format_si_number((region_total - sl_total), 1)
+                    st.metric(
+                        map_indicator, 
+                        f"{format_indicator_value_map(map_indicator, region_total)}",
+                        f"{kpi_text_main}: {kpi_value_main}"
+                        )
             st.caption("Opomba: »Delež v Sloveniji« je prikazan za kazalnike, kjer se vrednosti seštevajo (ne za stopnje/indekse).")
         with right_kpi:
             green_metric(f" Celotna Slovenija - {map_indicator}", format_indicator_value_map(map_indicator, sl_total))
@@ -1004,7 +1024,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
                 with kpi_cols[idx]:
                     if indicator in INDIKATORJI_Z_INDEKSI:
-                        kpi_text_dashboard = "Indeks s povprečjem v Sloveniji"
+                        kpi_text_dashboard = "Primerjalni indeks s Slovenijo"
                         kpi_value_dashboard = format_si_number(share, 1)
                     else:
                         kpi_text_dashboard = "Delež v Sloveniji"
