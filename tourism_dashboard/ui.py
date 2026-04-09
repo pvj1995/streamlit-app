@@ -991,22 +991,34 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                 )
             else:
                 if is_percent_like(map_indicator):
-                    print(region_total - sl_total)
                     kpi_text_main = "V primerjavi s Slovenijo"
                     kpi_value_main = format_pct(((region_total - sl_total)*100), 1)
-                    print(kpi_value_main)
-                    st.metric(
-                        map_indicator, 
-                        f"{format_indicator_value_map(map_indicator, region_total)}",
-                        f"{kpi_text_main}: {kpi_value_main}"
-                        )
+                    if ((region_total - sl_total)*100) >= 0:
+                        st.metric(
+                            map_indicator, 
+                            f"{format_indicator_value_map(map_indicator, region_total)}",
+                            f"{kpi_text_main}: +{kpi_value_main}"
+                            )
+                    else:
+                        st.metric(
+                            map_indicator, 
+                            f"{format_indicator_value_map(map_indicator, region_total)}",
+                            f"{kpi_text_main}: {kpi_value_main}"
+                            )
                 else:
                     kpi_text_main = "V primerjavi s Slovenijo"
                     kpi_value_main = format_si_number((region_total - sl_total), 1)
-                    st.metric(
-                        map_indicator, 
-                        f"{format_indicator_value_map(map_indicator, region_total)}",
-                        f"{kpi_text_main}: {kpi_value_main}"
+                    if ((region_total - sl_total)*100) >= 0:
+                        st.metric(
+                            map_indicator, 
+                            f"{format_indicator_value_map(map_indicator, region_total)}",
+                            f"{kpi_text_main}: +{kpi_value_main}"
+                            )
+                    else:
+                        st.metric(
+                            map_indicator, 
+                            f"{format_indicator_value_map(map_indicator, region_total)}",
+                            f"{kpi_text_main}: {kpi_value_main}"
                         )
             st.caption("Opomba: »Delež v Sloveniji« je prikazan za kazalnike, kjer se vrednosti seštevajo (ne za stopnje/indekse).")
         with right_kpi:
@@ -1040,7 +1052,36 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                             f"{kpi_text_dashboard}: {kpi_value_dashboard}",
                         )
                     else:
-                        st.metric(indicator, format_indicator_value_map(indicator, region_value))
+                        if is_percent_like(map_indicator):
+                            kpi_text_main = "V primerjavi s Slovenijo"
+                            kpi_value_main = format_pct(((region_total - sl_total)*100), 1)
+                            if ((region_total - sl_total)*100) >= 0:
+                                st.metric(
+                                    map_indicator, 
+                                    f"{format_indicator_value_map(map_indicator, region_total)}",
+                                    f"{kpi_text_main}: +{kpi_value_main}"
+                                    )
+                            else:
+                                st.metric(
+                                    map_indicator, 
+                                    f"{format_indicator_value_map(map_indicator, region_total)}",
+                                    f"{kpi_text_main}: {kpi_value_main}"
+                                    )
+                        else:
+                            kpi_text_main = "V primerjavi s Slovenijo"
+                            kpi_value_main = format_si_number((region_total - sl_total), 1)
+                            if ((region_total - sl_total)*100) >= 0:
+                                st.metric(
+                                    map_indicator, 
+                                    f"{format_indicator_value_map(map_indicator, region_total)}",
+                                    f"{kpi_text_main}: +{kpi_value_main}"
+                                    )
+                            else:
+                                st.metric(
+                                    map_indicator, 
+                                    f"{format_indicator_value_map(map_indicator, region_total)}",
+                                    f"{kpi_text_main}: {kpi_value_main}"
+                                )
 
         group_sections = build_top_bottom_group_sections(
             reg_df=region_df,
