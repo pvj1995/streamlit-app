@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from tourism_dashboard.ai import (
@@ -497,6 +498,242 @@ def render_market_growth_table(growth_df: pd.DataFrame) -> None:
     render_ranked_dataframe(table[["Trg", "Rast (%)"]])
 
 
+def wrap_generic_chart_label(label: str, width: int = 18) -> str:
+    wrapped = textwrap.wrap(
+        str(label),
+        width=width,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "<br>".join(wrapped) if wrapped else str(label)
+
+
+def _reference_label(reference_name: str, indicator: str, value: float) -> str:
+    return f"{reference_name}: {format_indicator_value_map(indicator, value)}"
+
+
+def _add_reference_line(
+    fig: Any,
+    *,
+    orientation: str,
+    indicator: str,
+    value: float | None,
+    label: str,
+    color: str,
+) -> None:
+    if value is None or pd.isna(value):
+        return
+    if orientation == "h":
+        fig.add_vline(
+            x=float(value),
+            line_color=color,
+            line_dash="dash",
+            line_width=3,
+        )
+    else:
+        fig.add_hline(
+            y=float(value),
+            line_color=color,
+            line_dash="dash",
+            line_width=3,
+        )
+
+
+def _add_reference_legend_entry(
+    fig: Any,
+    *,
+    label: str,
+    indicator: str,
+    value: float | None,
+    color: str,
+) -> None:
+    if value is None or pd.isna(value):
+        return
+    fig.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="lines",
+            line=dict(color=color, width=3, dash="dash"),
+            name=_reference_label(label, indicator, float(value)),
+            showlegend=True,
+            hoverinfo="skip",
+        )
+    )
+
+
+def should_use_share_pie_chart(indicator: str, values: pd.Series) -> bool:
+    if is_rate_like(indicator) or indicator in INDIKATORJI_Z_INDEKSI:
+        return False
+    numeric_values = pd.to_numeric(values, errors="coerce").dropna()
+    if numeric_values.empty:
+        return False
+    if (numeric_values < 0).any():
+        return False
+    return float(numeric_values.sum()) > 0
+
+
+def should_use_horizontal_chart(labels: pd.Series) -> bool:
+    label_texts = labels.astype(str).tolist()
+    return len(label_texts) > 8 or max((len(label) for label in label_texts), default=0) > 18
+
+
+def render_comparison_indicator_chart(
+    *,
+    chart_df: pd.DataFrame,
+    label_col: str,
+    value_col: str,
+    indicator: str,
+    title: str,
+    slovenia_value: float | None = None,
+    area_reference_value: float | None = None,
+    area_reference_label: str = "Območje",
+) -> None:
+    plot_df = chart_df[[label_col, value_col]].copy()
+    plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
+    plot_df = plot_df.dropna(subset=[value_col])
+    if plot_df.empty:
+        st.info("Za izbrani kazalnik ni dovolj podatkov za grafični prikaz.")
+        return
+
+    st.markdown(f"**{title}**")
+
+    if should_use_share_pie_chart(indicator, plot_df[value_col]):
+        plot_df = plot_df.sort_values(value_col, ascending=False).reset_index(drop=True)
+        total_value = float(plot_df[value_col].sum())
+        if total_value <= 0:
+            st.info("Za izbrani kazalnik ni dovolj podatkov za tortni prikaz.")
+            return
+
+        plot_df["Share"] = plot_df[value_col] / total_value
+        plot_df["Value_label"] = plot_df[value_col].apply(lambda value: format_indicator_value_map(indicator, value))
+        plot_df["Share_label"] = plot_df["Share"].apply(lambda value: format_pct(float(value) * 100.0, 1))
+        plot_df["Hover_label"] = plot_df.apply(
+            lambda row: (
+                f"<b>{row[label_col]}</b><br>"
+                f"Delež: {row['Share_label']}<br>"
+                f"Vrednost: {row['Value_label']}"
+            ),
+            axis=1,
+        )
+
+        pie_colors = px.colors.sequential.Blues[2:] + px.colors.sequential.Purples[2:]
+        fig = px.pie(
+            plot_df,
+            names=label_col,
+            values="Share",
+            color=label_col,
+            color_discrete_sequence=pie_colors,
+        )
+        fig.update_traces(
+            textposition="inside",
+            textinfo="percent",
+            customdata=plot_df[["Hover_label"]].to_numpy(),
+            hovertemplate="%{customdata[0]}<extra></extra>",
+        )
+        fig.update_layout(
+            margin=dict(t=20, b=10, l=10, r=10),
+            legend_title_text=label_col,
+            showlegend=True,
+        )
+        st.plotly_chart(fig, width="stretch")
+        return
+
+    plot_df = plot_df.sort_values(value_col, ascending=False).reset_index(drop=True)
+    plot_df["Value_label"] = plot_df[value_col].apply(lambda value: format_indicator_value_map(indicator, value))
+    orientation = "h" if should_use_horizontal_chart(plot_df[label_col]) else "v"
+
+    if orientation == "h":
+        fig = px.bar(
+            plot_df,
+            x=value_col,
+            y=label_col,
+            orientation="h",
+            text="Value_label",
+            custom_data=[label_col, "Value_label"],
+        )
+        fig.update_traces(
+            marker_color="#2563eb",
+            textposition="auto",
+            hovertemplate="<b>%{customdata[0]}</b><br>Vrednost: %{customdata[1]}<extra></extra>",
+        )
+        fig.update_layout(
+            margin=dict(t=20, b=10, l=10, r=10),
+            showlegend=False,
+            height=max(380, 42 * len(plot_df) + 80),
+            xaxis_title=indicator,
+            yaxis_title=None,
+        )
+        fig.update_yaxes(autorange="reversed")
+        if is_percent_like(indicator):
+            fig.update_xaxes(tickformat=".0%")
+    else:
+        plot_df["Chart_label"] = plot_df[label_col].apply(wrap_generic_chart_label)
+        fig = px.bar(
+            plot_df,
+            x="Chart_label",
+            y=value_col,
+            text="Value_label",
+            custom_data=[label_col, "Value_label"],
+        )
+        fig.update_traces(
+            marker_color="#2563eb",
+            cliponaxis=False,
+            textposition="outside",
+            hovertemplate="<b>%{customdata[0]}</b><br>Vrednost: %{customdata[1]}<extra></extra>",
+        )
+        fig.update_layout(
+            margin=dict(t=20, b=10, l=10, r=10),
+            showlegend=False,
+            height=430,
+            xaxis_title=None,
+            yaxis_title=indicator,
+            uniformtext_minsize=10,
+            uniformtext_mode="hide",
+        )
+        fig.update_xaxes(tickangle=0, automargin=True)
+        if is_percent_like(indicator):
+            fig.update_yaxes(tickformat=".0%")
+
+    _add_reference_line(
+        fig,
+        orientation=orientation,
+        indicator=indicator,
+        value=area_reference_value,
+        label=area_reference_label,
+        color="#f59e0b",
+    )
+    _add_reference_legend_entry(
+        fig,
+        label=area_reference_label,
+        indicator=indicator,
+        value=area_reference_value,
+        color="#f59e0b",
+    )
+    _add_reference_line(
+        fig,
+        orientation=orientation,
+        indicator=indicator,
+        value=slovenia_value,
+        label="Slovenija",
+        color="#dc2626",
+    )
+    _add_reference_legend_entry(
+        fig,
+        label="Slovenija",
+        indicator=indicator,
+        value=slovenia_value,
+        color="#dc2626",
+    )
+
+    if (area_reference_value is not None and not pd.isna(area_reference_value)) or (
+        slovenia_value is not None and not pd.isna(slovenia_value)
+    ):
+        fig.update_layout(legend_title_text="Reference", showlegend=True)
+
+    st.plotly_chart(fig, width="stretch")
+
+
 def render_market_structure_distribution(
     *,
     selected_group: str,
@@ -956,6 +1193,26 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             "Če tabelo dodatno razvrščaš s klikom na glavo stolpca, se prikazani rang ne posodobi."
         )
 
+        chart_indicator = map_indicator
+        if len(agg_needed) > 1:
+            chart_indicator = st.selectbox(
+                "Kazalnik za primerjalni graf območij",
+                agg_needed,
+                index=agg_needed.index(map_indicator),
+                key=f"compare_chart_indicator_{group_col}",
+                format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
+            )
+
+        chart_df = region_agg[[group_col, chart_indicator]].copy()
+        render_comparison_indicator_chart(
+            chart_df=chart_df,
+            label_col=group_col,
+            value_col=chart_indicator,
+            indicator=chart_indicator,
+            title="Grafična primerjava območij",
+            slovenia_value=df_slo_total_num.get(chart_indicator, np.nan),
+        )
+
         _, _, kpi_col = st.columns([1, 2, 1])
         with kpi_col:
             green_metric(
@@ -1230,6 +1487,32 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                     )
 
     if selected_region != "Vsa območja":
+        st.markdown("---")
+        st.subheader("Grafična primerjava občin znotraj območja")
+
+        chart_indicator = map_indicator
+        if len(agg_needed) > 1:
+            chart_indicator = st.selectbox(
+                "Kazalnik za primerjalni graf občin",
+                agg_needed,
+                index=agg_needed.index(map_indicator),
+                key=f"municipality_chart_indicator_{group_col}",
+                format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
+            )
+        st.subheader(f":blue[{chart_indicator}]")
+        region_chart_total = aggregate_indicator_with_rules(region_df, chart_indicator, AGG_RULES, selected_region)
+        municipality_chart_df = region_df[[ "Občine", chart_indicator]].copy()
+        render_comparison_indicator_chart(
+            chart_df=municipality_chart_df,
+            label_col="Občine",
+            value_col=chart_indicator,
+            indicator=chart_indicator,
+            title=f"Graf občin znotraj območja: {selected_region}",
+            slovenia_value=df_slo_total_num.get(chart_indicator, np.nan),
+            area_reference_value=region_chart_total,
+            area_reference_label="Območje",
+        )
+
         market_ai_context = build_market_ai_context(
             selected_group=selected_region,
             group_col=group_col,
