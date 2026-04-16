@@ -19,6 +19,7 @@ from tourism_dashboard.ai import (
 from tourism_dashboard.analytics import (
     build_top_bottom_group_sections,
     build_market_ai_context,
+    compute_market_seasonality_for_subset,
     compute_market_structure_for_subset,
     compute_region_aggregates,
     compute_market_growth_for_subset,
@@ -36,6 +37,7 @@ from tourism_dashboard.config import (
     GROUP_COLOR_EMOJI,
     INDIKATORJI_Z_INDEKSI,
     INDIKATORJI_Z_OPOMBO,
+    LOWER_IS_BETTER_INDICATORS,
     MARKET_COLOR_MAP,
     MARKET_PREFIX,
     SKUPNO_OPOZORILO_AGREGACIJA,
@@ -50,7 +52,13 @@ from tourism_dashboard.formatting import (
     is_percent_like,
     make_localized_column_config,
 )
-from tourism_dashboard.helpers import get_secret_value, shorten_label, col_for_year
+from tourism_dashboard.helpers import (
+    get_secret_value,
+    shorten_label,
+    col_for_year,
+    load_market_overnight_seasonality_data,
+    normalize_name,
+)
 from tourism_dashboard.maps import (
     MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE,
     build_region_geojson_from_municipalities,
@@ -119,6 +127,34 @@ def green_metric_small(label, value):
         """,
         unsafe_allow_html=True,
     )
+
+
+def build_slovenia_metric_delta(indicator: str, region_value: float, slovenia_value) -> str:
+    if slovenia_value is None or pd.isna(slovenia_value):
+        return "V primerjavi s Slovenijo: —"
+
+    lower_is_better = indicator in LOWER_IS_BETTER_INDICATORS
+
+    if (not is_rate_like(indicator)) and float(slovenia_value) != 0:
+        share = (float(region_value) / float(slovenia_value)) * 100.0
+        favorable = share < 100 if lower_is_better else share > 100
+        unfavorable = share > 100 if lower_is_better else share < 100
+        prefix = "+ " if favorable else ("- " if unfavorable else "")
+        if indicator in INDIKATORJI_Z_INDEKSI:
+            return f"{prefix}Primerjalni indeks s Slovenijo: {format_si_number(share, 1)}"
+        return f"Delež v Sloveniji: {format_pct(share, 1)}"
+
+    if is_percent_like(indicator):
+        delta = (float(region_value) - float(slovenia_value)) * 100.0
+        delta_text = format_pct(delta, 1)
+    else:
+        delta = float(region_value) - float(slovenia_value)
+        delta_text = format_si_number(delta, 1)
+
+    favorable = delta < 0 if lower_is_better else delta > 0
+    unfavorable = delta > 0 if lower_is_better else delta < 0
+    prefix = "+ " if favorable else ("- " if unfavorable else "")
+    return f"{prefix}V primerjavi s Slovenijo: {delta_text}"
 
 
 def build_filtered_indicator_groups(
@@ -348,6 +384,12 @@ def render_ranked_dataframe(
     )
 
 
+def render_section_heading(title: str, description: str | None = None) -> None:
+    st.markdown(f"### {title}")
+    if description:
+        st.caption(description)
+
+
 def _session_geojson_cache(key: str) -> dict[str, dict[str, Any] | None]:
     cache = st.session_state.get(key)
     if not isinstance(cache, dict):
@@ -496,6 +538,151 @@ def render_market_growth_table(growth_df: pd.DataFrame) -> None:
     table = table.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
     table["Rast (%)"] = table["Rast_raw"].apply(format_growth_label)
     render_ranked_dataframe(table[["Trg", "Rast (%)"]])
+
+
+def render_market_seasonality_chart(seasonality_df: pd.DataFrame, title: str) -> None:
+    if seasonality_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o sezonskosti prenočitev po trgih.")
+        return
+
+    chart_df = seasonality_df.copy().dropna(subset=["Vrednost"])
+    if chart_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o sezonskosti prenočitev po trgih.")
+        return
+
+    month_order = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"]
+    chart_df["Mesec"] = pd.Categorical(chart_df["Mesec"], categories=month_order, ordered=True)
+    chart_df = chart_df.sort_values(["Trg", "Mesec"]).reset_index(drop=True)
+    chart_df["Vrednost_prikaz"] = chart_df["Vrednost"].apply(
+        lambda value: format_indicator_value_map("Prenočitve turistov SKUPAJ - 2025", value)
+    )
+
+    st.markdown(f"**{title}**")
+    fig = px.line(
+        chart_df,
+        x="Mesec",
+        y="Vrednost",
+        color="Trg",
+        markers=True,
+        color_discrete_map=MARKET_COLOR_MAP,
+        category_orders={"Mesec": month_order},
+        custom_data=["Vrednost_prikaz"],
+    )
+    fig.update_traces(
+        line=dict(width=3),
+        marker=dict(size=7),
+        hovertemplate="<b>%{fullData.name}</b><br>%{x}: %{customdata[0]}<extra></extra>",
+    )
+    fig.update_layout(
+        margin=dict(t=20, b=10, l=10, r=10),
+        xaxis_title="Meseci",
+        yaxis_title="Število prenočitev",
+        legend_title_text="Skupine trgov",
+        hovermode="x unified",
+        height=520,
+    )
+    fig.update_xaxes(type="category")
+    st.plotly_chart(fig, width="stretch")
+
+
+def get_seasonality_sheet_key(view_title: str, group_col: str) -> str | None:
+    if group_col == "SLOVENIJA":
+        return "Občine"
+
+    mapping = {
+        "Turistične regije": "Turistične regije",
+        "Vodilne destinacije": "Vodilne destinacije",
+        "Perspektivne destinacije": "Perspektivne destinacije",
+        "Makrodestinacije": "Makrodestinacije",
+    }
+    return mapping.get(view_title)
+
+
+def render_market_overnight_seasonality_distribution(
+    *,
+    selected_group: str,
+    view_title: str,
+    group_col: str,
+    mode: str,
+    df_source: pd.DataFrame,
+) -> None:
+    seasonality_by_year = load_market_overnight_seasonality_data()
+    if not seasonality_by_year:
+        st.warning("Ne najdem datotek za sezonskost prenočitev po trgih.")
+        return
+
+    available_years = sorted(seasonality_by_year.keys())
+    selected_year = st.selectbox(
+        "Leto",
+        available_years,
+        index=len(available_years) - 1,
+        key=f"trgi_seasonality_year_{group_col}",
+    )
+    seasonality_book = seasonality_by_year[selected_year]
+    municipality_sheet = seasonality_book.get("Občine")
+    if municipality_sheet is None or municipality_sheet.empty:
+        st.warning("V sezonski datoteki manjka list »Občine«.")
+        return
+
+    if mode == "Celotno območje":
+        if group_col == "SLOVENIJA":
+            area_subset = municipality_sheet[
+                municipality_sheet["__label__"].apply(normalize_name) == normalize_name("SLOVENIJA")
+            ].copy()
+        else:
+            sheet_key = get_seasonality_sheet_key(view_title, group_col)
+            sheet_df = seasonality_book.get(sheet_key or "")
+            if sheet_df is None or sheet_df.empty:
+                st.warning("V sezonski datoteki ne najdem ustreznega lista za izbran pogled.")
+                return
+            area_subset = sheet_df[
+                sheet_df["__label__"].apply(normalize_name) == normalize_name(selected_group)
+            ].copy()
+
+        if area_subset.empty:
+            st.info("Za izbrano območje ni sezonskih podatkov o prenočitvah po trgih.")
+            return
+
+        with st.container(border=True):
+            render_section_heading(
+                f"Sezonskost prenočitev po trgih: {selected_group}",
+                f"Linijski prikaz mesečnega gibanja prenočitev po skupinah trgov za leto {selected_year}.",
+            )
+            chart_df = compute_market_seasonality_for_subset(area_subset)
+            render_market_seasonality_chart(chart_df, f"Sezonskost prenočitev po trgih ({selected_year})")
+        return
+
+    filtered_source = df_source[df_source[group_col].notna()].copy()
+    municipality_names = (
+        filtered_source[filtered_source[group_col] == selected_group]["Občine"]
+        .dropna()
+        .astype(str)
+        .tolist()
+    )
+    municipality_names = [name for name in municipality_names if normalize_name(name) in set(municipality_sheet["__label__"].apply(normalize_name))]
+    if not municipality_names:
+        st.info("Za izbrano območje ni občinskih sezonskih podatkov o prenočitvah po trgih.")
+        return
+
+    with st.container(border=True):
+        render_section_heading(
+            f"Občine znotraj območja: {selected_group}",
+            f"Izberi občino za prikaz mesečnega gibanja prenočitev po trgih v letu {selected_year}.",
+        )
+        chosen_muni = st.selectbox(
+            "Izberi občino",
+            municipality_names,
+            index=0,
+            key=f"trgi_seasonality_muni_{group_col}_{selected_year}",
+        )
+        muni_subset = municipality_sheet[
+            municipality_sheet["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
+        ].copy()
+        chart_df = compute_market_seasonality_for_subset(muni_subset)
+        render_market_seasonality_chart(
+            chart_df,
+            f"{chosen_muni} – sezonskost prenočitev po trgih ({selected_year})",
+        )
 
 
 def wrap_generic_chart_label(label: str, width: int = 18) -> str:
@@ -1225,58 +1412,15 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         region_total = region_agg_by_group.at[selected_region, map_indicator]
         sl_total = df_slo_total_num.get(map_indicator, np.nan)
 
-        share_si = np.nan
-        kpi_text_main = "Odstopanje od Slovenije"
-
-        if (not is_rate_like(map_indicator)) and sl_total and not np.isnan(sl_total) and sl_total != 0:
-            share_si = (region_total / sl_total) * 100.0
-
-        if map_indicator in INDIKATORJI_Z_INDEKSI:
-            kpi_text_main = "Primerjalni indeks s Slovenijo"
-            kpi_value_main = format_si_number(share_si, 1)
-        else:
-            kpi_text_main = "Delež v Sloveniji"
-            kpi_value_main = format_pct(share_si, 1)
+        main_delta_text = build_slovenia_metric_delta(map_indicator, float(region_total), sl_total)
 
         left_kpi, right_kpi = st.columns([1.2, 1])
         with left_kpi:
-            if not np.isnan(share_si):
-                st.metric(
-                    map_indicator,
-                    f"{format_indicator_value_map(map_indicator, region_total)}",
-                    f"{kpi_text_main}: {kpi_value_main}",
-                )
-            else:
-                if is_percent_like(map_indicator):
-                    kpi_text_main = "V primerjavi s Slovenijo"
-                    kpi_value_main = format_pct(((region_total - sl_total)*100), 1)
-                    if ((region_total - sl_total)*100) >= 0:
-                        st.metric(
-                            map_indicator, 
-                            f"{format_indicator_value_map(map_indicator, region_total)}",
-                            f"{kpi_text_main}: +{kpi_value_main}"
-                            )
-                    else:
-                        st.metric(
-                            map_indicator, 
-                            f"{format_indicator_value_map(map_indicator, region_total)}",
-                            f"{kpi_text_main}: {kpi_value_main}"
-                            )
-                else:
-                    kpi_text_main = "V primerjavi s Slovenijo"
-                    kpi_value_main = format_si_number((region_total - sl_total), 1)
-                    if ((region_total - sl_total)*100) >= 0:
-                        st.metric(
-                            map_indicator, 
-                            f"{format_indicator_value_map(map_indicator, region_total)}",
-                            f"{kpi_text_main}: +{kpi_value_main}"
-                            )
-                    else:
-                        st.metric(
-                            map_indicator, 
-                            f"{format_indicator_value_map(map_indicator, region_total)}",
-                            f"{kpi_text_main}: {kpi_value_main}"
-                        )
+            st.metric(
+                map_indicator,
+                f"{format_indicator_value_map(map_indicator, region_total)}",
+                main_delta_text,
+            )
             st.caption("Opomba: »Delež v Sloveniji« je prikazan za kazalnike, kjer se vrednosti seštevajo (ne za stopnje/indekse).")
         with right_kpi:
             green_metric(f" Celotna Slovenija - {map_indicator}", format_indicator_value_map(map_indicator, sl_total))
@@ -1287,58 +1431,15 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                 region_value = float(region_agg_by_group.at[selected_region, indicator])
                 slovenia_value = df_slo_total_num.get(indicator, np.nan)
 
-                share = np.nan
-                if (not is_rate_like(indicator)) and slovenia_value and not np.isnan(slovenia_value) and slovenia_value != 0:
-                    share = (region_value / slovenia_value) * 100.0
-
                 with kpi_cols[idx]:
-                    if indicator in INDIKATORJI_Z_INDEKSI:
-                        kpi_text_dashboard = "Primerjalni indeks s Slovenijo"
-                        kpi_value_dashboard = format_si_number(share, 1)
-                    else:
-                        kpi_text_dashboard = "Delež v Sloveniji"
-                        kpi_value_dashboard = format_pct(share, 1)
-
                     if slovenia_value is not None and not (isinstance(slovenia_value, float) and np.isnan(slovenia_value)):
                         green_metric_small("Slovenija", format_indicator_value_map(indicator, slovenia_value))
 
-                    if not np.isnan(share):
-                        st.metric(
-                            indicator,
-                            format_indicator_value_map(indicator, region_value),
-                            f"{kpi_text_dashboard}: {kpi_value_dashboard}",
-                        )
-                    else:
-                        if is_percent_like(map_indicator):
-                            kpi_text_main = "V primerjavi s Slovenijo"
-                            kpi_value_main = format_pct(((region_total - sl_total)*100), 1)
-                            if ((region_total - sl_total)*100) >= 0:
-                                st.metric(
-                                    map_indicator, 
-                                    f"{format_indicator_value_map(map_indicator, region_total)}",
-                                    f"{kpi_text_main}: +{kpi_value_main}"
-                                    )
-                            else:
-                                st.metric(
-                                    map_indicator, 
-                                    f"{format_indicator_value_map(map_indicator, region_total)}",
-                                    f"{kpi_text_main}: {kpi_value_main}"
-                                    )
-                        else:
-                            kpi_text_main = "V primerjavi s Slovenijo"
-                            kpi_value_main = format_si_number((region_total - sl_total), 1)
-                            if ((region_total - sl_total)*100) >= 0:
-                                st.metric(
-                                    map_indicator, 
-                                    f"{format_indicator_value_map(map_indicator, region_total)}",
-                                    f"{kpi_text_main}: +{kpi_value_main}"
-                                    )
-                            else:
-                                st.metric(
-                                    map_indicator, 
-                                    f"{format_indicator_value_map(map_indicator, region_total)}",
-                                    f"{kpi_text_main}: {kpi_value_main}"
-                                )
+                    st.metric(
+                        indicator,
+                        format_indicator_value_map(indicator, region_value),
+                        build_slovenia_metric_delta(indicator, region_value, slovenia_value),
+                    )
 
         group_sections = build_top_bottom_group_sections(
             reg_df=region_df,
@@ -1560,8 +1661,12 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
         key=f"trgi_mode_{group_col}",
     )
 
-    structure_tab, growth_tab = st.tabs(
-        ["Struktura prenočitev po trgih", "Rast števila prenočitev po trgih"]
+    structure_tab, growth_tab, seasonality_tab = st.tabs(
+        [
+            "Struktura prenočitev po trgih",
+            "Rast števila prenočitev po trgih",
+            "Sezonskost prenočitev po trgih",
+        ]
     )
 
     with structure_tab:
@@ -1591,4 +1696,13 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
                 if ctx.market_growth_numeric_df is not None and group_col in ctx.market_growth_numeric_df.columns
                 else None
             ),
+        )
+
+    with seasonality_tab:
+        render_market_overnight_seasonality_distribution(
+            selected_group=selected_group,
+            view_title=view_title,
+            group_col=group_col,
+            mode=mode,
+            df_source=ctx.df,
         )

@@ -159,6 +159,116 @@ def build_numeric_dataframe(df: pd.DataFrame, numeric_columns: list[str]) -> pd.
     return numeric_df
 
 
+def find_market_overnight_seasonality_files() -> dict[int, Path]:
+    files_by_year: dict[int, Path] = {}
+    pattern = re.compile(r"sezonskost\s+prenocitev\s+po\s+mesecih\s+in\s+trgih\s*-\s*((?:19|20)\d{2})", re.IGNORECASE)
+
+    for directory in [DATA_DIR, BASE_DIR]:
+        if not directory.exists():
+            continue
+        for candidate in sorted(directory.glob("*.xlsx")):
+            if candidate.name.startswith("~$"):
+                continue
+            normalized_name = strip_diacritics(candidate.name).lower()
+            match = pattern.search(normalized_name)
+            if not match:
+                continue
+            files_by_year.setdefault(int(match.group(1)), candidate)
+
+    return files_by_year
+
+
+def normalize_market_overnight_seasonality_sheet_name(sheet_name: str) -> str | None:
+    canonical = canon_col(sheet_name)
+    if canonical.startswith("obcine"):
+        return "Občine"
+    if canonical.startswith(
+        (
+            "turisticna regija",
+            "turisticna regije",
+            "turisticne regija",
+            "turisticne regije",
+        )
+    ):
+        return "Turistične regije"
+    if canonical.startswith("vodilne turisticne destinacije") or canonical.startswith("vodilne destinacije"):
+        return "Vodilne destinacije"
+    if canonical.startswith("perspektivne turisticne destinacije") or canonical.startswith("perspektivne destinacije"):
+        return "Perspektivne destinacije"
+    if canonical.startswith("makro turisticne destinacije") or canonical.startswith("makro destinacije"):
+        return "Makrodestinacije"
+    return None
+
+
+def _build_market_overnight_seasonality_columns(raw_df: pd.DataFrame) -> list[str]:
+    if raw_df.shape[0] < 2:
+        return []
+
+    market_header = raw_df.iloc[0]
+    month_header = raw_df.iloc[1]
+    label_column = safe_str(month_header.iloc[0]).strip() or "Območje"
+
+    columns = ["__label__"]
+    current_market = ""
+    for idx in range(1, raw_df.shape[1]):
+        market_label = safe_str(market_header.iloc[idx]).strip()
+        if market_label:
+            current_market = market_label
+
+        month_label = safe_str(month_header.iloc[idx]).strip().lower()
+        if current_market and month_label:
+            columns.append(f"{current_market}__{month_label}")
+        else:
+            columns.append(f"Unnamed__{idx}")
+
+    columns[0] = label_column
+    return columns
+
+
+@st.cache_data(show_spinner=False)
+def load_market_overnight_seasonality_workbook(path_str: str) -> dict[str, pd.DataFrame]:
+    path = Path(path_str)
+    if not path.exists():
+        return {}
+
+    try:
+        workbook = pd.ExcelFile(path)
+    except Exception:
+        return {}
+
+    loaded: dict[str, pd.DataFrame] = {}
+    for sheet_name in workbook.sheet_names:
+        normalized_sheet_name = normalize_market_overnight_seasonality_sheet_name(sheet_name)
+        if normalized_sheet_name is None:
+            continue
+
+        raw_df = pd.read_excel(path, sheet_name=sheet_name, header=None)
+        columns = _build_market_overnight_seasonality_columns(raw_df)
+        if not columns:
+            continue
+
+        data_df = raw_df.iloc[2:].copy()
+        data_df.columns = columns
+        label_column = columns[0]
+        data_df = data_df[data_df[label_column].notna()].copy()
+        data_df = data_df.rename(columns={label_column: "__label__"})
+
+        numeric_columns = [column for column in data_df.columns if column != "__label__"]
+        data_df = build_numeric_dataframe(data_df, numeric_columns)
+        loaded[normalized_sheet_name] = data_df
+
+    return loaded
+
+
+def load_market_overnight_seasonality_data() -> dict[int, dict[str, pd.DataFrame]]:
+    loaded: dict[int, dict[str, pd.DataFrame]] = {}
+    for year, path in find_market_overnight_seasonality_files().items():
+        workbook_data = load_market_overnight_seasonality_workbook(str(path))
+        if workbook_data:
+            loaded[year] = workbook_data
+    return loaded
+
+
 def try_load_geojson(path: Path):
     if not path.exists():
         return None

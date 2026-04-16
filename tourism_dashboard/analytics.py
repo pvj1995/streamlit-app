@@ -730,3 +730,57 @@ def compute_market_growth_for_subset(
         rows.append({"Trg": label, "Rast_raw": growth})
 
     return pd.DataFrame(rows)
+
+
+MARKET_MONTH_ORDER = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"]
+
+
+def compute_market_seasonality_for_subset(
+    subset: pd.DataFrame,
+    *,
+    include_total_market: bool = False,
+) -> pd.DataFrame:
+    if subset.empty:
+        return pd.DataFrame(columns=["Trg", "Mesec", "Vrednost"])
+
+    pattern = re.compile(r"^(.+?)__(jan|feb|mar|apr|maj|jun|jul|avg|sep|okt|nov|dec)$", re.IGNORECASE)
+    month_order = {month: index for index, month in enumerate(MARKET_MONTH_ORDER)}
+    market_order: dict[str, int] = {}
+    next_market_order = 0
+    rows: list[dict[str, Any]] = []
+
+    for column in subset.columns:
+        match = pattern.match(str(column))
+        if not match:
+            continue
+
+        market_label = match.group(1).strip()
+        month_label = match.group(2).lower()
+        if market_label == "SKUPAJ VSI TRGI" and not include_total_market:
+            continue
+
+        if market_label not in market_order:
+            market_order[market_label] = next_market_order
+            next_market_order += 1
+
+        values = subset[column].astype(float)
+        rows.append(
+            {
+                "Trg": market_label,
+                "Mesec": month_label,
+                "Vrednost": float(values.sum(skipna=True)),
+                "_market_order": market_order[market_label],
+                "_month_order": month_order.get(month_label, 999),
+            }
+        )
+
+    seasonality_df = pd.DataFrame(rows)
+    if seasonality_df.empty:
+        return pd.DataFrame(columns=["Trg", "Mesec", "Vrednost"])
+
+    seasonality_df = seasonality_df.sort_values(
+        ["_market_order", "_month_order"],
+        ascending=[True, True],
+        na_position="last",
+    ).reset_index(drop=True)
+    return seasonality_df.drop(columns=["_market_order", "_month_order"])

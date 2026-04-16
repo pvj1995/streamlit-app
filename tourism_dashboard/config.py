@@ -434,7 +434,7 @@ INDIKATORJI_Z_VALUTO = {
     "Ocenjeni stroški dela v reg. podj. v Gostinski (I) dejavnosti",
     "Stroški dela na zaposl. na leto v reg. podj. v Gostinski (I) dejavnosti",
     "Povprečna neto plača izplačana na zaposl. osebo v Gostinstvu (I)",
-    "Povprečna neto plača izplačana na zaposl. osebo v Gostinstvu (I)2025",
+    "Povprečna neto plača izplačana na zaposl. osebo v Gostinstvu (I) 2025",
     "EBITDA v reg.podjetjih in s.p. v Gostinstvu (I)",
     "Čisti dobiček/izguba v reg. podj. in s.p. v Gostinstvu (I)",
     "Sredstva v reg. Podjetjih in s.p. v Gostinstvu (I)",
