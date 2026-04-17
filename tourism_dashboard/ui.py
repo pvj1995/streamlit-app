@@ -1804,7 +1804,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     with map_indicator_col:
         st.markdown("<div style='min-height: 10rem;'></div>", unsafe_allow_html=True)
         map_indicator = st.selectbox(
-            "Kazalnik za zemljevid",
+            "Glavni Kazalnik za zemljevid in grafe",
             group_indicator_cols,
             index=0,
             key=f"sel_ind_{group_col}",
@@ -1815,7 +1815,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     dash_inds = []
     if ctx.dashboard_mode:
         dash_inds = st.multiselect(
-            "Kazalniki za dashboard (do 6)",
+            "Dodatni kazalniki za dashboard in grafe (do 6)",
             group_indicator_cols,
             default=group_indicator_cols[:0] if len(group_indicator_cols) >= 4 else group_indicator_cols,
             max_selections=6,
