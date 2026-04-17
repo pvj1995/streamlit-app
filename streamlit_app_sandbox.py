@@ -236,7 +236,7 @@ ctx = DashboardContext(
     dashboard_mode=dashboard_mode,
 )
 
-tab_kazalniki, tab_trgi = st.tabs(["Kazalniki", "Struktura prenočitev po trgih"])
+tab_kazalniki, tab_trgi = st.tabs(["Kazalniki", "Turistični promet in sezonskost po trgih"])
 
 with tab_kazalniki:
     view_labels = [view[0] for view in views]

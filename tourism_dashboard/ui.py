@@ -19,6 +19,8 @@ from tourism_dashboard.ai import (
 from tourism_dashboard.analytics import (
     build_top_bottom_group_sections,
     build_market_ai_context,
+    compute_market_annual_average_for_subset,
+    compute_market_monthly_structure_for_subset,
     compute_market_seasonality_for_subset,
     compute_market_structure_for_subset,
     compute_region_aggregates,
@@ -56,7 +58,9 @@ from tourism_dashboard.helpers import (
     get_secret_value,
     shorten_label,
     col_for_year,
+    load_market_arrivals_seasonality_data,
     load_market_overnight_seasonality_data,
+    load_market_pdb_data,
     normalize_name,
 )
 from tourism_dashboard.maps import (
@@ -454,13 +458,34 @@ def wrap_market_chart_label(label: str, width: int = 18) -> str:
 
 def normalize_market_display_label(label: str) -> str:
     mapping = {
+        "DOMAČI": "Domači trg",
         "DACH trgi": "DACH trgi (nemško govoreči trgi: D, A in CH)",
+        "DACH": "DACH trgi (nemško govoreči trgi: D, A in CH)",
+        "ITALIJA": "Italijanski trg",
+        "ITA": "Italijanski trg",
+        "VZHE": "Vzh.evropski trgi (PL,CZ,HU,SK,LIT,LTV,EST,RU,UKR)",
+        "ZAHE": "Drugi zah.in sev. evropski trgi (ES,P, F,Benelux, Skandinavske države)",
+        "PMT": "Prekomorski trgi (ZDA, VB, CAN, AU, Azija)",
+        "JVE": "Trgi JV Evrope",
+        "DRUGI": "Vsi drugi tuji trgi",
+        "DRUG": "Vsi drugi tuji trgi",
     }
     return mapping.get(str(label).strip(), str(label).strip())
 
 
 def shorten_market_axis_label(label: str) -> str:
     return str(label).split("(", 1)[0].strip()
+
+
+def get_market_chart_label(label: str) -> str:
+    return shorten_market_axis_label(normalize_market_display_label(label))
+
+
+def get_market_chart_color_map() -> dict[str, str]:
+    return {
+        get_market_chart_label(label): color
+        for label, color in MARKET_COLOR_MAP.items()
+    }
 
 
 def format_growth_label(value: float) -> str:
@@ -540,21 +565,30 @@ def render_market_growth_table(growth_df: pd.DataFrame) -> None:
     render_ranked_dataframe(table[["Trg", "Rast (%)"]])
 
 
-def render_market_seasonality_chart(seasonality_df: pd.DataFrame, title: str) -> None:
+def render_market_seasonality_chart(
+    seasonality_df: pd.DataFrame,
+    title: str,
+    *,
+    value_title: str = "Število prenočitev",
+    empty_message: str = "Za izbran prikaz ni dovolj podatkov o sezonskosti prenočitev po trgih.",
+    hover_indicator: str = "Prenočitve turistov SKUPAJ - 2025",
+) -> None:
     if seasonality_df.empty:
-        st.info("Za izbran prikaz ni dovolj podatkov o sezonskosti prenočitev po trgih.")
+        st.info(empty_message)
         return
 
     chart_df = seasonality_df.copy().dropna(subset=["Vrednost"])
     if chart_df.empty:
-        st.info("Za izbran prikaz ni dovolj podatkov o sezonskosti prenočitev po trgih.")
+        st.info(empty_message)
         return
 
     month_order = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"]
+    chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
+    chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
     chart_df["Mesec"] = pd.Categorical(chart_df["Mesec"], categories=month_order, ordered=True)
     chart_df = chart_df.sort_values(["Trg", "Mesec"]).reset_index(drop=True)
     chart_df["Vrednost_prikaz"] = chart_df["Vrednost"].apply(
-        lambda value: format_indicator_value_map("Prenočitve turistov SKUPAJ - 2025", value)
+        lambda value: format_indicator_value_map(hover_indicator, value)
     )
 
     st.markdown(f"**{title}**")
@@ -564,25 +598,127 @@ def render_market_seasonality_chart(seasonality_df: pd.DataFrame, title: str) ->
         y="Vrednost",
         color="Trg",
         markers=True,
-        color_discrete_map=MARKET_COLOR_MAP,
+        color_discrete_map=get_market_chart_color_map(),
         category_orders={"Mesec": month_order},
-        custom_data=["Vrednost_prikaz"],
+        custom_data=["Vrednost_prikaz", "Trg_full"],
     )
     fig.update_traces(
         line=dict(width=3),
         marker=dict(size=7),
-        hovertemplate="<b>%{fullData.name}</b><br>%{x}: %{customdata[0]}<extra></extra>",
+        hovertemplate="<b>%{customdata[1]}</b><br>%{x}: %{customdata[0]}<extra></extra>",
     )
     fig.update_layout(
         margin=dict(t=20, b=10, l=10, r=10),
         xaxis_title="Meseci",
-        yaxis_title="Število prenočitev",
+        yaxis_title=value_title,
         legend_title_text="Skupine trgov",
         hovermode="x unified",
         height=520,
     )
     fig.update_xaxes(type="category")
     st.plotly_chart(fig, width="stretch")
+
+
+def render_market_pdb_annual_chart(annual_df: pd.DataFrame, title: str) -> None:
+    if annual_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o letnem povprečju PDB po trgih.")
+        return
+
+    chart_df = annual_df.copy().dropna(subset=["Vrednost"])
+    if chart_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o letnem povprečju PDB po trgih.")
+        return
+
+    chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
+    chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
+    chart_df = chart_df.sort_values("Vrednost", ascending=True).reset_index(drop=True)
+    chart_df["Trg_chart"] = chart_df["Trg"].apply(wrap_market_chart_label)
+    chart_df["Vrednost_label"] = chart_df["Vrednost"].apply(lambda value: format_si_number(value, 1))
+
+    st.markdown(f"**{title}**")
+    fig = px.bar(
+        chart_df,
+        x="Vrednost",
+        y="Trg_chart",
+        orientation="h",
+        color="Trg",
+        color_discrete_map=get_market_chart_color_map(),
+        text="Vrednost_label",
+        custom_data=["Trg_full", "Vrednost_label"],
+    )
+    fig.update_traces(
+        textposition="outside",
+        cliponaxis=False,
+        hovertemplate="<b>%{customdata[0]}</b><br>PDB: %{customdata[1]}<extra></extra>",
+    )
+    fig.update_layout(
+        margin=dict(t=20, b=10, l=10, r=30),
+        showlegend=False,
+        xaxis_title="PDB",
+        yaxis_title="Trgi",
+        uniformtext_minsize=10,
+        uniformtext_mode="hide",
+        height=520,
+    )
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_market_structure_pie_table(
+    structure_df: pd.DataFrame,
+    *,
+    pie_title: str,
+    note_text: str | None = None,
+) -> None:
+    if structure_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o strukturi po trgih.")
+        return
+
+    display_df = structure_df.copy().dropna(subset=["Delež_norm"])
+    if display_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o strukturi po trgih.")
+        return
+
+    display_df["Trg_full"] = display_df["Trg"].apply(normalize_market_display_label)
+    display_df["Trg_short"] = display_df["Trg_full"].apply(shorten_market_axis_label)
+    display_df = display_df.sort_values("Delež_norm", ascending=False).reset_index(drop=True)
+    display_df["Trg_short_wrapped"] = display_df["Trg_short"].apply(lambda value: shorten_label(value, 24))
+
+    chart_col, table_col = st.columns([1.2, 1])
+    with chart_col:
+        st.markdown(f"**{pie_title}**")
+        fig = px.pie(
+            display_df,
+            names="Trg_short_wrapped",
+            values="Delež_norm",
+            color="Trg_short",
+            color_discrete_map=get_market_chart_color_map(),
+            hole=0.4,
+            custom_data=["Trg_full"],
+        )
+        fig.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+            hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
+        )
+        fig.update_layout(
+            margin=dict(t=10, b=10, l=10, r=10),
+            showlegend=True,
+            legend_title_text="Trgi",
+        )
+        st.plotly_chart(fig, width="stretch")
+
+    with table_col:
+        st.markdown("**Tabela**")
+        table = pd.DataFrame(
+            {
+                "Trg": display_df["Trg_full"],
+                "Delež (%)": display_df["Delež_norm"],
+            }
+        )
+        render_ranked_dataframe(table)
+
+    if note_text:
+        st.caption(note_text)
 
 
 def get_seasonality_sheet_key(view_title: str, group_col: str) -> str | None:
@@ -596,6 +732,43 @@ def get_seasonality_sheet_key(view_title: str, group_col: str) -> str | None:
         "Makrodestinacije": "Makrodestinacije",
     }
     return mapping.get(view_title)
+
+
+def get_market_monthly_area_subset(
+    *,
+    monthly_sheet: pd.DataFrame,
+    aggregate_sheet: pd.DataFrame | None,
+    selected_group: str,
+    group_col: str,
+) -> pd.DataFrame:
+    if group_col == "SLOVENIJA":
+        return monthly_sheet[
+            monthly_sheet["__label__"].apply(normalize_name) == normalize_name("SLOVENIJA")
+        ].copy()
+
+    if aggregate_sheet is None or aggregate_sheet.empty:
+        return pd.DataFrame()
+
+    return aggregate_sheet[
+        aggregate_sheet["__label__"].apply(normalize_name) == normalize_name(selected_group)
+    ].copy()
+
+
+def get_market_monthly_municipality_names(
+    *,
+    df_source: pd.DataFrame,
+    municipality_sheet: pd.DataFrame,
+    selected_group: str,
+    group_col: str,
+) -> list[str]:
+    municipality_name_set = set(municipality_sheet["__label__"].apply(normalize_name))
+    municipality_names = (
+        df_source[df_source[group_col] == selected_group]["Občine"]
+        .dropna()
+        .astype(str)
+        .tolist()
+    )
+    return [name for name in municipality_names if normalize_name(name) in municipality_name_set]
 
 
 def render_market_overnight_seasonality_distribution(
@@ -669,12 +842,15 @@ def render_market_overnight_seasonality_distribution(
             f"Občine znotraj območja: {selected_group}",
             f"Izberi občino za prikaz mesečnega gibanja prenočitev po trgih v letu {selected_year}.",
         )
-        chosen_muni = st.selectbox(
+        chosen_muni_raw = st.selectbox(
             "Izberi občino",
             municipality_names,
             index=0,
             key=f"trgi_seasonality_muni_{group_col}_{selected_year}",
         )
+        if chosen_muni_raw is None:
+            return
+        chosen_muni = str(chosen_muni_raw)
         muni_subset = municipality_sheet[
             municipality_sheet["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
         ].copy()
@@ -682,6 +858,388 @@ def render_market_overnight_seasonality_distribution(
         render_market_seasonality_chart(
             chart_df,
             f"{chosen_muni} – sezonskost prenočitev po trgih ({selected_year})",
+        )
+
+
+def render_market_arrivals_structure_distribution(
+    *,
+    selected_group: str,
+    view_title: str,
+    group_col: str,
+    mode: str,
+    df_source: pd.DataFrame,
+) -> None:
+    seasonality_by_year = load_market_arrivals_seasonality_data()
+    if not seasonality_by_year:
+        st.warning("Ne najdem datotek za sezonskost prihodov po trgih.")
+        return
+
+    available_years = sorted(seasonality_by_year.keys())
+    selected_year = st.selectbox(
+        "Leto",
+        available_years,
+        index=len(available_years) - 1,
+        key=f"prihodi_structure_year_{group_col}",
+    )
+    seasonality_book = seasonality_by_year[selected_year]
+    municipality_sheet = seasonality_book.get("Občine")
+    if municipality_sheet is None or municipality_sheet.empty:
+        st.warning("V datoteki prihodov manjka list »Občine«.")
+        return
+
+    if mode == "Celotno območje":
+        if group_col == "SLOVENIJA":
+            area_subset = municipality_sheet[
+                municipality_sheet["__label__"].apply(normalize_name) == normalize_name("SLOVENIJA")
+            ].copy()
+        else:
+            sheet_key = get_seasonality_sheet_key(view_title, group_col)
+            sheet_df = seasonality_book.get(sheet_key or "")
+            if sheet_df is None or sheet_df.empty:
+                st.warning("V datoteki prihodov ne najdem ustreznega lista za izbran pogled.")
+                return
+            area_subset = sheet_df[
+                sheet_df["__label__"].apply(normalize_name) == normalize_name(selected_group)
+            ].copy()
+
+        if area_subset.empty:
+            st.info("Za izbrano območje ni podatkov o strukturi prihodov po trgih.")
+            return
+
+        with st.container(border=True):
+            render_section_heading(
+                f"Struktura prihodov po trgih: {selected_group}",
+                f"Tortni prikaz strukture prihodov po skupinah trgov za leto {selected_year}.",
+            )
+            structure_df = compute_market_monthly_structure_for_subset(area_subset)
+            render_market_structure_pie_table(
+                structure_df,
+                pie_title=f"Struktura prihodov po trgih ({selected_year})",
+                note_text=(
+                    "Deleži so izračunani iz vsote vseh mesečnih prihodov po posamezni skupini trgov "
+                    f"v letu {selected_year} in nato normalizirani na 100%."
+                ),
+            )
+        return
+
+    filtered_source = df_source[df_source[group_col].notna()].copy()
+    municipality_name_set = set(municipality_sheet["__label__"].apply(normalize_name))
+    municipality_names = (
+        filtered_source[filtered_source[group_col] == selected_group]["Občine"]
+        .dropna()
+        .astype(str)
+        .tolist()
+    )
+    municipality_names = [name for name in municipality_names if normalize_name(name) in municipality_name_set]
+    if not municipality_names:
+        st.info("Za izbrano območje ni občinskih podatkov o strukturi prihodov po trgih.")
+        return
+
+    with st.container(border=True):
+        render_section_heading(
+            f"Občine znotraj območja: {selected_group}",
+            f"Izberi občino za prikaz strukture prihodov po trgih v letu {selected_year}.",
+        )
+        chosen_muni_raw = st.selectbox(
+            "Izberi občino",
+            municipality_names,
+            index=0,
+            key=f"prihodi_structure_muni_{group_col}_{selected_year}",
+        )
+        if chosen_muni_raw is None:
+            return
+        chosen_muni = str(chosen_muni_raw)
+        muni_subset = municipality_sheet[
+            municipality_sheet["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
+        ].copy()
+        structure_df = compute_market_monthly_structure_for_subset(muni_subset)
+        render_market_structure_pie_table(
+            structure_df,
+            pie_title=f"{chosen_muni} – struktura prihodov po trgih ({selected_year})",
+            note_text=(
+                "Deleži so izračunani iz vsote vseh mesečnih prihodov po posamezni skupini trgov "
+                f"v letu {selected_year}."
+            ),
+        )
+
+
+def render_market_arrivals_seasonality_distribution(
+    *,
+    selected_group: str,
+    view_title: str,
+    group_col: str,
+    mode: str,
+    df_source: pd.DataFrame,
+) -> None:
+    seasonality_by_year = load_market_arrivals_seasonality_data()
+    if not seasonality_by_year:
+        st.warning("Ne najdem datotek za sezonskost prihodov po trgih.")
+        return
+
+    available_years = sorted(seasonality_by_year.keys())
+    selected_year = st.selectbox(
+        "Leto",
+        available_years,
+        index=len(available_years) - 1,
+        key=f"prihodi_seasonality_year_{group_col}",
+    )
+    seasonality_book = seasonality_by_year[selected_year]
+    municipality_sheet = seasonality_book.get("Občine")
+    if municipality_sheet is None or municipality_sheet.empty:
+        st.warning("V sezonski datoteki prihodov manjka list »Občine«.")
+        return
+
+    if mode == "Celotno območje":
+        if group_col == "SLOVENIJA":
+            area_subset = municipality_sheet[
+                municipality_sheet["__label__"].apply(normalize_name) == normalize_name("SLOVENIJA")
+            ].copy()
+        else:
+            sheet_key = get_seasonality_sheet_key(view_title, group_col)
+            sheet_df = seasonality_book.get(sheet_key or "")
+            if sheet_df is None or sheet_df.empty:
+                st.warning("V datoteki prihodov ne najdem ustreznega lista za izbran pogled.")
+                return
+            area_subset = sheet_df[
+                sheet_df["__label__"].apply(normalize_name) == normalize_name(selected_group)
+            ].copy()
+
+        if area_subset.empty:
+            st.info("Za izbrano območje ni sezonskih podatkov o prihodih po trgih.")
+            return
+
+        with st.container(border=True):
+            render_section_heading(
+                f"Sezonskost prihodov po trgih: {selected_group}",
+                f"Linijski prikaz mesečnega gibanja prihodov po skupinah trgov za leto {selected_year}.",
+            )
+            chart_df = compute_market_seasonality_for_subset(area_subset)
+            render_market_seasonality_chart(
+                chart_df,
+                f"Sezonskost prihodov po trgih ({selected_year})",
+                value_title="Število prihodov",
+                empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti prihodov po trgih.",
+                hover_indicator="Prihodi turistov SKUPAJ - 2025",
+            )
+        return
+
+    filtered_source = df_source[df_source[group_col].notna()].copy()
+    municipality_name_set = set(municipality_sheet["__label__"].apply(normalize_name))
+    municipality_names = (
+        filtered_source[filtered_source[group_col] == selected_group]["Občine"]
+        .dropna()
+        .astype(str)
+        .tolist()
+    )
+    municipality_names = [name for name in municipality_names if normalize_name(name) in municipality_name_set]
+    if not municipality_names:
+        st.info("Za izbrano območje ni občinskih sezonskih podatkov o prihodih po trgih.")
+        return
+
+    with st.container(border=True):
+        render_section_heading(
+            f"Občine znotraj območja: {selected_group}",
+            f"Izberi občino za prikaz mesečnega gibanja prihodov po trgih v letu {selected_year}.",
+        )
+        chosen_muni_raw = st.selectbox(
+            "Izberi občino",
+            municipality_names,
+            index=0,
+            key=f"prihodi_seasonality_muni_{group_col}_{selected_year}",
+        )
+        if chosen_muni_raw is None:
+            return
+        chosen_muni = str(chosen_muni_raw)
+        muni_subset = municipality_sheet[
+            municipality_sheet["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
+        ].copy()
+        chart_df = compute_market_seasonality_for_subset(muni_subset)
+        render_market_seasonality_chart(
+            chart_df,
+            f"{chosen_muni} – sezonskost prihodov po trgih ({selected_year})",
+            value_title="Število prihodov",
+            empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti prihodov po trgih.",
+            hover_indicator="Prihodi turistov SKUPAJ - 2025",
+        )
+
+
+def render_market_pdb_annual_distribution(
+    *,
+    selected_group: str,
+    view_title: str,
+    group_col: str,
+    mode: str,
+    df_source: pd.DataFrame,
+) -> None:
+    pdb_by_year = load_market_pdb_data()
+    if not pdb_by_year:
+        st.warning("Ne najdem datotek za PDB po trgih.")
+        return
+
+    available_years = sorted(pdb_by_year.keys())
+    selected_year = st.selectbox(
+        "Leto",
+        available_years,
+        index=len(available_years) - 1,
+        key=f"pdb_annual_year_{group_col}",
+    )
+    pdb_book = pdb_by_year[selected_year]
+    municipality_entry = pdb_book.get("Občine")
+    municipality_annual_df = municipality_entry.get("annual_avg") if municipality_entry else None
+    if municipality_annual_df is None or municipality_annual_df.empty:
+        st.warning("V PDB datoteki manjka del z letnim povprečjem za list »Občine«.")
+        return
+
+    if mode == "Celotno območje":
+        sheet_key = get_seasonality_sheet_key(view_title, group_col)
+        aggregate_entry = pdb_book.get(sheet_key or "")
+        aggregate_annual_df = aggregate_entry.get("annual_avg") if aggregate_entry else None
+        area_subset = get_market_monthly_area_subset(
+            monthly_sheet=municipality_annual_df,
+            aggregate_sheet=aggregate_annual_df,
+            selected_group=selected_group,
+            group_col=group_col,
+        )
+        if area_subset.empty:
+            st.info("Za izbrano območje ni podatkov o letnem povprečju PDB po trgih.")
+            return
+
+        with st.container(border=True):
+            render_section_heading(
+                f"PDB po trgih – letno povprečje: {selected_group}",
+                f"Vodoravni stolpčni graf letnega povprečja PDB po skupinah trgov za leto {selected_year}.",
+            )
+            annual_df = compute_market_annual_average_for_subset(area_subset)
+            render_market_pdb_annual_chart(
+                annual_df,
+                f"PDB po trgih – letno povprečje ({selected_year})",
+            )
+        return
+
+    municipality_names = get_market_monthly_municipality_names(
+        df_source=df_source,
+        municipality_sheet=municipality_annual_df,
+        selected_group=selected_group,
+        group_col=group_col,
+    )
+    if not municipality_names:
+        st.info("Za izbrano območje ni občinskih podatkov o letnem povprečju PDB po trgih.")
+        return
+
+    with st.container(border=True):
+        render_section_heading(
+            f"Občine znotraj območja: {selected_group}",
+            f"Izberi občino za prikaz letnega povprečja PDB po trgih v letu {selected_year}.",
+        )
+        chosen_muni_raw = st.selectbox(
+            "Izberi občino",
+            municipality_names,
+            index=0,
+            key=f"pdb_annual_muni_{group_col}_{selected_year}",
+        )
+        if chosen_muni_raw is None:
+            return
+        chosen_muni = str(chosen_muni_raw)
+        muni_subset = municipality_annual_df[
+            municipality_annual_df["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
+        ].copy()
+        annual_df = compute_market_annual_average_for_subset(muni_subset)
+        render_market_pdb_annual_chart(
+            annual_df,
+            f"{chosen_muni} – PDB po trgih, letno povprečje ({selected_year})",
+        )
+
+
+def render_market_pdb_seasonality_distribution(
+    *,
+    selected_group: str,
+    view_title: str,
+    group_col: str,
+    mode: str,
+    df_source: pd.DataFrame,
+) -> None:
+    pdb_by_year = load_market_pdb_data()
+    if not pdb_by_year:
+        st.warning("Ne najdem datotek za PDB po trgih.")
+        return
+
+    available_years = sorted(pdb_by_year.keys())
+    selected_year = st.selectbox(
+        "Leto",
+        available_years,
+        index=len(available_years) - 1,
+        key=f"pdb_seasonality_year_{group_col}",
+    )
+    pdb_book = pdb_by_year[selected_year]
+    municipality_entry = pdb_book.get("Občine")
+    municipality_seasonality_df = municipality_entry.get("seasonality") if municipality_entry else None
+    if municipality_seasonality_df is None or municipality_seasonality_df.empty:
+        st.warning("V PDB datoteki manjka del s sezonskostjo za list »Občine«.")
+        return
+
+    if mode == "Celotno območje":
+        sheet_key = get_seasonality_sheet_key(view_title, group_col)
+        aggregate_entry = pdb_book.get(sheet_key or "")
+        aggregate_seasonality_df = aggregate_entry.get("seasonality") if aggregate_entry else None
+        area_subset = get_market_monthly_area_subset(
+            monthly_sheet=municipality_seasonality_df,
+            aggregate_sheet=aggregate_seasonality_df,
+            selected_group=selected_group,
+            group_col=group_col,
+        )
+        if area_subset.empty:
+            st.info("Za izbrano območje ni sezonskih podatkov o PDB po trgih.")
+            return
+
+        with st.container(border=True):
+            render_section_heading(
+                f"Sezonskost PDB po trgih: {selected_group}",
+                f"Linijski prikaz mesečnega gibanja PDB po skupinah trgov za leto {selected_year}.",
+            )
+            chart_df = compute_market_seasonality_for_subset(area_subset)
+            render_market_seasonality_chart(
+                chart_df,
+                f"Sezonskost PDB po trgih ({selected_year})",
+                value_title="PDB",
+                empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
+                hover_indicator="PDB turistov SKUPAJ - 2025",
+            )
+        return
+
+    municipality_names = get_market_monthly_municipality_names(
+        df_source=df_source,
+        municipality_sheet=municipality_seasonality_df,
+        selected_group=selected_group,
+        group_col=group_col,
+    )
+    if not municipality_names:
+        st.info("Za izbrano območje ni občinskih sezonskih podatkov o PDB po trgih.")
+        return
+
+    with st.container(border=True):
+        render_section_heading(
+            f"Občine znotraj območja: {selected_group}",
+            f"Izberi občino za prikaz mesečnega gibanja PDB po trgih v letu {selected_year}.",
+        )
+        chosen_muni_raw = st.selectbox(
+            "Izberi občino",
+            municipality_names,
+            index=0,
+            key=f"pdb_seasonality_muni_{group_col}_{selected_year}",
+        )
+        if chosen_muni_raw is None:
+            return
+        chosen_muni = str(chosen_muni_raw)
+        muni_subset = municipality_seasonality_df[
+            municipality_seasonality_df["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
+        ].copy()
+        chart_df = compute_market_seasonality_for_subset(muni_subset)
+        render_market_seasonality_chart(
+            chart_df,
+            f"{chosen_muni} – sezonskost PDB po trgih ({selected_year})",
+            value_title="PDB",
+            empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
+            hover_indicator="PDB turistov SKUPAJ - 2025",
         )
 
 
@@ -949,42 +1507,10 @@ def render_market_structure_distribution(
 
     if mode == "Celotno območje":
         st.markdown(f"### {selected_group}")
-        chart_col, table_col = st.columns([1.2, 1])
-        with chart_col:
-            st.markdown("**Tortni prikaz (normalizirano na 100%)**")
-            pie_df = structure_df.sort_values("Delež_norm", ascending=False)
-            pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
-            fig = px.pie(
-                pie_df,
-                names="Trg_short",
-                values="Delež_norm",
-                color="Trg",
-                color_discrete_map=MARKET_COLOR_MAP,
-                hole=0.4,
-            )
-            fig.update_traces(
-                textposition="inside",
-                textinfo="percent+label",
-                hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
-                customdata=pie_df[["Trg"]].values,
-            )
-            fig.update_layout(
-                margin=dict(t=10, b=10, l=10, r=10),
-                showlegend=True,
-                legend_title_text="Trgi",
-            )
-            st.plotly_chart(fig, width="stretch")
-
-        with table_col:
-            st.markdown("**Tabela**")
-            table = structure_df.copy()
-            table["Delež (%)"] = table["Delež_norm"]
-            table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
-            render_ranked_dataframe(
-                table,
-                source_columns=None,
-            )
-
+        render_market_structure_pie_table(
+            structure_df,
+            pie_title="Tortni prikaz (normalizirano na 100%)",
+        )
         st.caption(
             "Opomba: deleži so izračunani uteženo glede na celotno število prenočitev "
             "in nato normalizirani na 100% (zaradi zaokroževanja/manjkajočih trgov)."
@@ -993,12 +1519,15 @@ def render_market_structure_distribution(
 
     st.markdown(f"### Občine znotraj območja: {selected_group}")
     municipality_df = subset[["Občine", base_weight_col] + market_cols_year].copy().rename(columns={"Občine": "Občina"})
-    chosen_muni = st.selectbox(
+    chosen_muni_raw = st.selectbox(
         "Izberi občino",
         municipality_df["Občina"].dropna().astype(str).tolist(),
         index=0,
         key=f"trgi_muni_{group_col}_{selected_year}",
     )
+    if chosen_muni_raw is None:
+        return
+    chosen_muni = str(chosen_muni_raw)
 
     municipality_row = municipality_df[municipality_df["Občina"] == chosen_muni].iloc[0]
     municipality_values = [
@@ -1011,40 +1540,10 @@ def render_market_structure_distribution(
         municipality_structure["Delež"] / municipality_total if municipality_total > 0 else np.nan
     )
 
-    chart_col, table_col = st.columns([1.2, 1])
-    with chart_col:
-        st.markdown(f"**{chosen_muni} – tortni prikaz (normalizirano na 100%)**")
-        pie_df = municipality_structure.sort_values("Delež_norm", ascending=False)
-        pie_df["Trg_short"] = pie_df["Trg"].apply(lambda value: shorten_label(value, 24))
-        fig = px.pie(
-            pie_df,
-            names="Trg_short",
-            values="Delež_norm",
-            color="Trg",
-            color_discrete_map=MARKET_COLOR_MAP,
-            hole=0.4,
-        )
-        fig.update_traces(
-            textposition="inside",
-            textinfo="percent+label",
-            hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
-            customdata=pie_df[["Trg"]].values,
-        )
-        fig.update_layout(
-            margin=dict(t=10, b=10, l=10, r=10),
-            showlegend=True,
-            legend_title_text="Trgi",
-        )
-        st.plotly_chart(fig, width='stretch')
-
-    with table_col:
-        st.markdown("**Tabela**")
-        table = municipality_structure.copy()
-        table["Delež (%)"] = municipality_structure["Delež_norm"]
-        table = table[["Trg", "Delež (%)"]].sort_values("Delež (%)", ascending=False)
-        render_ranked_dataframe(
-            table,
-        )
+    render_market_structure_pie_table(
+        municipality_structure,
+        pie_title=f"{chosen_muni} – tortni prikaz (normalizirano na 100%)",
+    )
 
     st.markdown("**Tabela občin (povzetek)**")
 
@@ -1124,12 +1623,15 @@ def render_market_growth_distribution(
 
     st.markdown(f"### Občine znotraj območja: {selected_group}")
     municipality_names = subset["Občine"].dropna().astype(str).tolist()
-    chosen_muni = st.selectbox(
+    chosen_muni_raw = st.selectbox(
         "Izberi občino",
         municipality_names,
         index=0,
         key=f"trgi_growth_muni_{group_col}_{selected_period}",
     )
+    if chosen_muni_raw is None:
+        return
+    chosen_muni = str(chosen_muni_raw)
     municipality_subset = subset[subset["Občine"].astype(str) == chosen_muni].copy()
     growth_df = compute_market_growth_for_subset(
         municipality_subset,
@@ -1631,7 +2133,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
 def render_market_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     st.caption(f"**Pogled:** {view_title}")
-    st.subheader("Prenočitve po trgih")
+    st.subheader("Prenočitve, prihodi, PDB in sezonskost po trgih")
 
     if not ctx.market_cols:
         st.warning(f"V Excelu ne najdem stolpcev, ki se začnejo z: '{MARKET_PREFIX}'.")
@@ -1661,11 +2163,23 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
         key=f"trgi_mode_{group_col}",
     )
 
-    structure_tab, growth_tab, seasonality_tab = st.tabs(
+    (
+        structure_tab,
+        growth_tab,
+        seasonality_tab,
+        arrivals_structure_tab,
+        arrivals_seasonality_tab,
+        pdb_annual_tab,
+        pdb_seasonality_tab,
+    ) = st.tabs(
         [
             "Struktura prenočitev po trgih",
             "Rast števila prenočitev po trgih",
             "Sezonskost prenočitev po trgih",
+            "Struktura prihodov po trgih",
+            "Sezonskost prihodov po trgih",
+            "PDB po trgih – letno povprečje",
+            "Sezonskost PDB po trgih",
         ]
     )
 
@@ -1700,6 +2214,42 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
 
     with seasonality_tab:
         render_market_overnight_seasonality_distribution(
+            selected_group=selected_group,
+            view_title=view_title,
+            group_col=group_col,
+            mode=mode,
+            df_source=ctx.df,
+        )
+
+    with arrivals_structure_tab:
+        render_market_arrivals_structure_distribution(
+            selected_group=selected_group,
+            view_title=view_title,
+            group_col=group_col,
+            mode=mode,
+            df_source=ctx.df,
+        )
+
+    with arrivals_seasonality_tab:
+        render_market_arrivals_seasonality_distribution(
+            selected_group=selected_group,
+            view_title=view_title,
+            group_col=group_col,
+            mode=mode,
+            df_source=ctx.df,
+        )
+
+    with pdb_annual_tab:
+        render_market_pdb_annual_distribution(
+            selected_group=selected_group,
+            view_title=view_title,
+            group_col=group_col,
+            mode=mode,
+            df_source=ctx.df,
+        )
+
+    with pdb_seasonality_tab:
+        render_market_pdb_seasonality_distribution(
             selected_group=selected_group,
             view_title=view_title,
             group_col=group_col,

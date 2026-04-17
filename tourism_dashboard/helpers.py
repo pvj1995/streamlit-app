@@ -73,8 +73,8 @@ def strip_diacritics(value: str) -> str:
     )
 
 
-def canon_col(value: str) -> str:
-    normalized = normalize_name(value)
+def canon_col(value) -> str:
+    normalized = normalize_name(safe_str(value))
     normalized = strip_diacritics(normalized).lower()
     normalized = re.sub(r"[^a-z0-9 ]+", "", normalized)
     return re.sub(r"\s+", " ", normalized).strip()
@@ -159,9 +159,9 @@ def build_numeric_dataframe(df: pd.DataFrame, numeric_columns: list[str]) -> pd.
     return numeric_df
 
 
-def find_market_overnight_seasonality_files() -> dict[int, Path]:
+def _find_market_monthly_files(filename_regex: str) -> dict[int, Path]:
     files_by_year: dict[int, Path] = {}
-    pattern = re.compile(r"sezonskost\s+prenocitev\s+po\s+mesecih\s+in\s+trgih\s*-\s*((?:19|20)\d{2})", re.IGNORECASE)
+    pattern = re.compile(filename_regex, re.IGNORECASE)
 
     for directory in [DATA_DIR, BASE_DIR]:
         if not directory.exists():
@@ -178,7 +178,25 @@ def find_market_overnight_seasonality_files() -> dict[int, Path]:
     return files_by_year
 
 
-def normalize_market_overnight_seasonality_sheet_name(sheet_name: str) -> str | None:
+def find_market_overnight_seasonality_files() -> dict[int, Path]:
+    return _find_market_monthly_files(
+        r"sezonskost\s+prenocitev\s+po\s+mesecih\s+in\s+trgih\s*-\s*((?:19|20)\d{2})"
+    )
+
+
+def find_market_arrivals_seasonality_files() -> dict[int, Path]:
+    return _find_market_monthly_files(
+        r"sezonskost\s+prihodov\s+po\s+mesecih\s+in\s+trgih\s*-\s*((?:19|20)\d{2})"
+    )
+
+
+def find_market_pdb_files() -> dict[int, Path]:
+    return _find_market_monthly_files(
+        r"sezonskost\s+pdb\s+po\s+mesecih\s+in\s+trgih\s*-\s*((?:19|20)\d{2})"
+    )
+
+
+def normalize_market_monthly_sheet_name(sheet_name: str) -> str | None:
     canonical = canon_col(sheet_name)
     if canonical.startswith("obcine"):
         return "Občine"
@@ -200,7 +218,11 @@ def normalize_market_overnight_seasonality_sheet_name(sheet_name: str) -> str | 
     return None
 
 
-def _build_market_overnight_seasonality_columns(raw_df: pd.DataFrame) -> list[str]:
+def normalize_market_overnight_seasonality_sheet_name(sheet_name: str) -> str | None:
+    return normalize_market_monthly_sheet_name(sheet_name)
+
+
+def _build_market_monthly_columns(raw_df: pd.DataFrame) -> list[str]:
     if raw_df.shape[0] < 2:
         return []
 
@@ -226,7 +248,7 @@ def _build_market_overnight_seasonality_columns(raw_df: pd.DataFrame) -> list[st
 
 
 @st.cache_data(show_spinner=False)
-def load_market_overnight_seasonality_workbook(path_str: str) -> dict[str, pd.DataFrame]:
+def _load_market_monthly_workbook(path_str: str) -> dict[str, pd.DataFrame]:
     path = Path(path_str)
     if not path.exists():
         return {}
@@ -238,12 +260,13 @@ def load_market_overnight_seasonality_workbook(path_str: str) -> dict[str, pd.Da
 
     loaded: dict[str, pd.DataFrame] = {}
     for sheet_name in workbook.sheet_names:
-        normalized_sheet_name = normalize_market_overnight_seasonality_sheet_name(sheet_name)
+        sheet_name_str = str(sheet_name)
+        normalized_sheet_name = normalize_market_monthly_sheet_name(sheet_name_str)
         if normalized_sheet_name is None:
             continue
 
-        raw_df = pd.read_excel(path, sheet_name=sheet_name, header=None)
-        columns = _build_market_overnight_seasonality_columns(raw_df)
+        raw_df = pd.read_excel(path, sheet_name=sheet_name_str, header=None)
+        columns = _build_market_monthly_columns(raw_df)
         if not columns:
             continue
 
@@ -260,10 +283,99 @@ def load_market_overnight_seasonality_workbook(path_str: str) -> dict[str, pd.Da
     return loaded
 
 
+@st.cache_data(show_spinner=False)
+def load_market_overnight_seasonality_workbook(path_str: str) -> dict[str, pd.DataFrame]:
+    return _load_market_monthly_workbook(path_str)
+
+
+@st.cache_data(show_spinner=False)
+def load_market_arrivals_seasonality_workbook(path_str: str) -> dict[str, pd.DataFrame]:
+    return _load_market_monthly_workbook(path_str)
+
+
 def load_market_overnight_seasonality_data() -> dict[int, dict[str, pd.DataFrame]]:
     loaded: dict[int, dict[str, pd.DataFrame]] = {}
     for year, path in find_market_overnight_seasonality_files().items():
         workbook_data = load_market_overnight_seasonality_workbook(str(path))
+        if workbook_data:
+            loaded[year] = workbook_data
+    return loaded
+
+
+def load_market_arrivals_seasonality_data() -> dict[int, dict[str, pd.DataFrame]]:
+    loaded: dict[int, dict[str, pd.DataFrame]] = {}
+    for year, path in find_market_arrivals_seasonality_files().items():
+        workbook_data = load_market_arrivals_seasonality_workbook(str(path))
+        if workbook_data:
+            loaded[year] = workbook_data
+    return loaded
+
+
+@st.cache_data(show_spinner=False)
+def load_market_pdb_workbook(path_str: str) -> dict[str, dict[str, pd.DataFrame]]:
+    path = Path(path_str)
+    if not path.exists():
+        return {}
+
+    try:
+        workbook = pd.ExcelFile(path)
+    except Exception:
+        return {}
+
+    loaded: dict[str, dict[str, pd.DataFrame]] = {}
+    for sheet_name in workbook.sheet_names:
+        sheet_name_str = str(sheet_name)
+        normalized_sheet_name = normalize_market_monthly_sheet_name(sheet_name_str)
+        if normalized_sheet_name is None:
+            continue
+
+        raw_df = pd.read_excel(path, sheet_name=sheet_name_str, header=None)
+        if raw_df.shape[0] < 2:
+            continue
+
+        annual_start_idx: int | None = None
+        for idx in range(1, raw_df.shape[1]):
+            header_value = canon_col(raw_df.iloc[0, idx])
+            if header_value.startswith("letno povprecje"):
+                annual_start_idx = idx
+                break
+
+        if annual_start_idx is None:
+            continue
+
+        seasonality_source = raw_df.iloc[:, :annual_start_idx].copy()
+        seasonality_columns = _build_market_monthly_columns(seasonality_source)
+        if not seasonality_columns:
+            continue
+
+        seasonality_df = seasonality_source.iloc[2:].copy()
+        seasonality_df.columns = seasonality_columns
+        seasonality_label_column = seasonality_columns[0]
+        seasonality_df = seasonality_df[seasonality_df[seasonality_label_column].notna()].copy()
+        seasonality_df = seasonality_df.rename(columns={seasonality_label_column: "__label__"})
+        seasonality_numeric_columns = [column for column in seasonality_df.columns if column != "__label__"]
+        seasonality_df = build_numeric_dataframe(seasonality_df, seasonality_numeric_columns)
+
+        annual_headers = [safe_str(value).strip() for value in raw_df.iloc[1, annual_start_idx:].tolist()]
+        annual_headers = [header or f"Unnamed__annual_{idx}" for idx, header in enumerate(annual_headers)]
+        annual_source = raw_df.iloc[2:, [0] + list(range(annual_start_idx, raw_df.shape[1]))].copy()
+        annual_source.columns = ["__label__"] + annual_headers
+        annual_source = annual_source[annual_source["__label__"].notna()].copy()
+        annual_numeric_columns = [column for column in annual_source.columns if column != "__label__"]
+        annual_source = build_numeric_dataframe(annual_source, annual_numeric_columns)
+
+        loaded[normalized_sheet_name] = {
+            "seasonality": seasonality_df,
+            "annual_avg": annual_source,
+        }
+
+    return loaded
+
+
+def load_market_pdb_data() -> dict[int, dict[str, dict[str, pd.DataFrame]]]:
+    loaded: dict[int, dict[str, dict[str, pd.DataFrame]]] = {}
+    for year, path in find_market_pdb_files().items():
+        workbook_data = load_market_pdb_workbook(str(path))
         if workbook_data:
             loaded[year] = workbook_data
     return loaded

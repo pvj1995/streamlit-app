@@ -784,3 +784,70 @@ def compute_market_seasonality_for_subset(
         na_position="last",
     ).reset_index(drop=True)
     return seasonality_df.drop(columns=["_market_order", "_month_order"])
+
+
+def compute_market_monthly_structure_for_subset(
+    subset: pd.DataFrame,
+    *,
+    include_total_market: bool = False,
+) -> pd.DataFrame:
+    seasonality_df = compute_market_seasonality_for_subset(
+        subset,
+        include_total_market=include_total_market,
+    )
+    if seasonality_df.empty:
+        return pd.DataFrame(columns=["Trg", "Vrednost", "Delež_norm"])
+
+    grouped_values = (
+        seasonality_df.groupby("Trg", dropna=False, as_index=False)
+        .agg(Vrednost=("Vrednost", "sum"))
+    )
+    structure_df = grouped_values.sort_values(
+        by="Vrednost",
+        ascending=False,
+        na_position="last",
+    ).reset_index(drop=True)
+
+    total_value = float(structure_df["Vrednost"].sum(skipna=True))
+    if total_value > 0:
+        structure_df["Delež_norm"] = structure_df["Vrednost"] / total_value
+    else:
+        structure_df["Delež_norm"] = np.nan
+
+    return structure_df
+
+
+def compute_market_annual_average_for_subset(
+    subset: pd.DataFrame,
+    *,
+    include_total_market: bool = False,
+) -> pd.DataFrame:
+    if subset.empty:
+        return pd.DataFrame(columns=["Trg", "Vrednost"])
+
+    rows: list[dict[str, Any]] = []
+    for column in subset.columns:
+        if column == "__label__":
+            continue
+        market_label = str(column).strip()
+        if not market_label:
+            continue
+        if market_label == "SKUPAJ VSI TRGI" and not include_total_market:
+            continue
+
+        values = subset[column].astype(float)
+        valid_values = values.dropna()
+        rows.append(
+            {
+                "Trg": market_label,
+                "Vrednost": float(valid_values.iloc[0]) if len(valid_values) == 1 else float(valid_values.mean())
+                if not valid_values.empty
+                else np.nan,
+            }
+        )
+
+    annual_df = pd.DataFrame(rows)
+    if annual_df.empty:
+        return pd.DataFrame(columns=["Trg", "Vrednost"])
+
+    return annual_df.sort_values("Vrednost", ascending=False, na_position="last").reset_index(drop=True)
