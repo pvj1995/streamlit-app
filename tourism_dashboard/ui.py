@@ -1431,6 +1431,7 @@ def render_market_pdb_seasonality_distribution(
                 empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
                 hover_indicator="PDB turistov SKUPAJ - 2025",
                 add_market_average_line=True,
+                add_total_area_secondary=True,
             )
         return
 
@@ -1469,6 +1470,7 @@ def render_market_pdb_seasonality_distribution(
             empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
             hover_indicator="PDB turistov SKUPAJ - 2025",
             add_market_average_line=True,
+            add_total_area_secondary=True,
         )
 
 
