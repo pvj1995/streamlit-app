@@ -2459,7 +2459,7 @@ def render_market_structure(view_title: str, group_col: str, ctx: DashboardConte
             group_col=group_col,
             mode=mode,
             growth_numeric_df=(
-                ctx.market_growth_numeric_df[ctx.market_growth_numeric_df[group_col].notna()].copy()
+                ctx.market_growth_numeric_df.copy()
                 if ctx.market_growth_numeric_df is not None and group_col in ctx.market_growth_numeric_df.columns
                 else None
             ),
