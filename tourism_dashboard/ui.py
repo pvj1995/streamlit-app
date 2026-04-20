@@ -628,6 +628,7 @@ def render_market_seasonality_chart(
     hover_indicator: str = "Prenočitve turistov SKUPAJ - 2025",
     add_market_average_line: bool = False,
     add_total_area_secondary: bool = False,
+    add_average_area_secondary: bool = False,
 ) -> None:
     if seasonality_df.empty:
         st.info(empty_message)
@@ -640,7 +641,7 @@ def render_market_seasonality_chart(
 
     month_order = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"]
     total_df = compute_market_monthly_total_from_seasonality(chart_df) if add_total_area_secondary else pd.DataFrame()
-    average_df = compute_market_monthly_average_from_seasonality(chart_df) if add_market_average_line else pd.DataFrame()
+    average_df = compute_market_monthly_average_from_seasonality(chart_df) if (add_market_average_line or add_average_area_secondary) else pd.DataFrame()
     chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
     chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
     chart_df["Mesec"] = pd.Categorical(chart_df["Mesec"], categories=month_order, ordered=True)
@@ -652,25 +653,28 @@ def render_market_seasonality_chart(
     st.markdown(f"**{title}**")
     fig = go.Figure()
 
-    if not total_df.empty:
-        total_df = total_df.copy()
-        total_df["Mesec"] = pd.Categorical(total_df["Mesec"], categories=month_order, ordered=True)
-        total_df = total_df.sort_values("Mesec").reset_index(drop=True)
-        total_df["Vrednost_prikaz"] = total_df["Vrednost"].apply(
+    area_df = total_df if add_total_area_secondary else average_df if add_average_area_secondary else pd.DataFrame()
+    area_label = MARKET_TOTAL_DISPLAY_LABEL if add_total_area_secondary else MARKET_AVERAGE_DISPLAY_LABEL
+    area_on_secondary_axis = add_total_area_secondary
+    if not area_df.empty:
+        area_df = area_df.copy()
+        area_df["Mesec"] = pd.Categorical(area_df["Mesec"], categories=month_order, ordered=True)
+        area_df = area_df.sort_values("Mesec").reset_index(drop=True)
+        area_df["Vrednost_prikaz"] = area_df["Vrednost"].apply(
             lambda value: format_indicator_value_map(hover_indicator, value)
         )
         fig.add_trace(
             go.Scatter(
-                x=total_df["Mesec"],
-                y=total_df["Vrednost"],
+                x=area_df["Mesec"],
+                y=area_df["Vrednost"],
                 mode="lines",
-                name=MARKET_TOTAL_DISPLAY_LABEL,
-                yaxis="y2",
+                name=area_label,
                 line=dict(color=MARKET_TOTAL_LINE_COLOR, width=0),
                 fill="tozeroy",
                 fillcolor=MARKET_TOTAL_FILL_COLOR,
-                hovertemplate="<b>" + MARKET_TOTAL_DISPLAY_LABEL + "</b><br>%{x}: %{customdata}<extra></extra>",
-                customdata=total_df["Vrednost_prikaz"],
+                hovertemplate="<b>" + area_label + "</b><br>%{x}: %{customdata}<extra></extra>",
+                customdata=area_df["Vrednost_prikaz"],
+                yaxis="y2" if area_on_secondary_axis else None,
             )
         )
 
@@ -691,7 +695,7 @@ def render_market_seasonality_chart(
             )
         )
 
-    if not average_df.empty:
+    if not average_df.empty and not add_average_area_secondary:
         average_df = average_df.copy()
         average_df["Mesec"] = pd.Categorical(average_df["Mesec"], categories=month_order, ordered=True)
         average_df = average_df.sort_values("Mesec").reset_index(drop=True)
@@ -714,15 +718,15 @@ def render_market_seasonality_chart(
     yaxis_config: dict[str, Any] = {"title": value_title}
     layout_kwargs: dict[str, Any] = {}
     right_margin = 10
-    if add_total_area_secondary and not total_df.empty:
+    if add_total_area_secondary and not area_df.empty:
         left_max = float(pd.to_numeric(chart_df["Vrednost"], errors="coerce").max())
-        right_max = float(pd.to_numeric(total_df["Vrednost"], errors="coerce").max())
+        right_max = float(pd.to_numeric(area_df["Vrednost"], errors="coerce").max())
         left_limit = left_max * 1.08 if np.isfinite(left_max) and left_max > 0 else 1.0
         right_limit = right_max * 1.08 if np.isfinite(right_max) and right_max > 0 else 1.0
         yaxis_config["range"] = [0, left_limit]
         right_margin = 150
         layout_kwargs["yaxis2"] = {
-            "title": f"{value_title} – vsi trgi",
+            "title": f"{value_title} – {'povprečje trgov' if add_average_area_secondary else 'vsi trgi'}",
             "overlaying": "y",
             "side": "right",
             "range": [0, right_limit],
@@ -737,6 +741,12 @@ def render_market_seasonality_chart(
             "xanchor": "left",
             "yanchor": "top",
         }
+    elif add_average_area_secondary and not area_df.empty:
+        left_max = float(pd.to_numeric(chart_df["Vrednost"], errors="coerce").max())
+        area_max = float(pd.to_numeric(area_df["Vrednost"], errors="coerce").max())
+        upper_bound = max(left_max, area_max)
+        upper_limit = upper_bound * 1.08 if np.isfinite(upper_bound) and upper_bound > 1 else 1.1
+        yaxis_config["range"] = [1, upper_limit]
 
     fig.update_layout(
         margin=dict(t=20, b=10, l=10, r=right_margin),
@@ -1430,8 +1440,7 @@ def render_market_pdb_seasonality_distribution(
                 value_title="PDB",
                 empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
                 hover_indicator="PDB turistov SKUPAJ - 2025",
-                add_market_average_line=True,
-                add_total_area_secondary=True,
+                add_average_area_secondary=True,
             )
         return
 
@@ -1469,8 +1478,7 @@ def render_market_pdb_seasonality_distribution(
             value_title="PDB",
             empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
             hover_indicator="PDB turistov SKUPAJ - 2025",
-            add_market_average_line=True,
-            add_total_area_secondary=True,
+            add_average_area_secondary=True,
         )
 
 
