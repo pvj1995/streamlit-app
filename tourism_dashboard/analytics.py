@@ -732,6 +732,46 @@ def compute_market_growth_for_subset(
     return pd.DataFrame(rows)
 
 
+def compute_market_growth_weighted_mean(
+    subset: pd.DataFrame,
+    *,
+    base_year: int,
+    target_year: int,
+) -> float | None:
+    if subset.empty:
+        return None
+
+    base_cols, base_labels = get_market_overnight_cols_for_year(subset, base_year)
+    target_cols, target_labels = get_market_overnight_cols_for_year(subset, target_year)
+    base_market_cols = {label: column for column, label in zip(base_cols, base_labels)}
+    target_market_cols = {label: column for column, label in zip(target_cols, target_labels)}
+    labels = [label for label in target_market_cols if label in base_market_cols]
+    if not labels:
+        return None
+
+    weighted_values: list[float] = []
+    weights: list[float] = []
+    for label in labels:
+        base_values = subset[base_market_cols[label]].astype(float)
+        target_values = subset[target_market_cols[label]].astype(float)
+        mask = (~base_values.isna()) & (~target_values.isna()) & (base_values >= 0) & (target_values >= 0)
+        if not mask.any():
+            continue
+
+        base_sum = float(base_values[mask].sum(skipna=True))
+        target_sum = float(target_values[mask].sum(skipna=True))
+        if base_sum <= 0:
+            continue
+
+        growth = (target_sum / base_sum) - 1.0
+        weighted_values.append(float(growth))
+        weights.append(base_sum)
+
+    if not weights:
+        return None
+    return float(np.average(weighted_values, weights=weights))
+
+
 MARKET_MONTH_ORDER = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"]
 MARKET_TOTAL_SOURCE_LABEL = "SKUPAJ VSI TRGI"
 
@@ -889,3 +929,28 @@ def compute_market_annual_average_for_subset(
         return pd.DataFrame(columns=["Trg", "Vrednost"])
 
     return annual_df.sort_values("Vrednost", ascending=False, na_position="last").reset_index(drop=True)
+
+
+def compute_market_weighted_mean_from_frames(
+    value_df: pd.DataFrame,
+    weight_df: pd.DataFrame,
+    *,
+    value_col: str = "Vrednost",
+    weight_col: str = "Vrednost",
+) -> float | None:
+    if value_df.empty or weight_df.empty or "Trg" not in value_df.columns or "Trg" not in weight_df.columns:
+        return None
+
+    value_rows = value_df[["Trg", value_col]].copy().rename(columns={value_col: "__value__"})
+    weight_rows = weight_df[["Trg", weight_col]].copy().rename(columns={weight_col: "__weight__"})
+    merged = value_rows.merge(weight_rows, on="Trg", how="inner")
+    if merged.empty:
+        return None
+
+    values = pd.to_numeric(merged["__value__"], errors="coerce")
+    weights = pd.to_numeric(merged["__weight__"], errors="coerce")
+    mask = (~values.isna()) & (~weights.isna()) & (weights > 0)
+    if not mask.any():
+        return None
+
+    return float(np.average(values[mask], weights=weights[mask]))

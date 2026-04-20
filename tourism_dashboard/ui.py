@@ -20,9 +20,11 @@ from tourism_dashboard.analytics import (
     build_top_bottom_group_sections,
     build_market_ai_context,
     compute_market_annual_average_for_subset,
+    compute_market_growth_weighted_mean,
     compute_market_monthly_average_from_seasonality,
     compute_market_monthly_structure_for_subset,
     compute_market_monthly_total_from_seasonality,
+    compute_market_weighted_mean_from_frames,
     compute_market_seasonality_for_subset,
     compute_market_structure_for_subset,
     compute_region_aggregates,
@@ -514,15 +516,6 @@ MARKET_TOTAL_FILL_COLOR = "rgba(134, 239, 172, 0.28)"
 MARKET_TOTAL_LINE_COLOR = "rgba(134, 239, 172, 0.0)"
 AREA_REFERENCE_COLOR = "#f59e0b"
 SECONDARY_REFERENCE_COLOR = "#dc2626"
-
-
-def compute_average_reference_value(df: pd.DataFrame, value_col: str) -> float | None:
-    if df.empty or value_col not in df.columns:
-        return None
-    values = pd.to_numeric(df[value_col], errors="coerce").dropna()
-    if values.empty:
-        return None
-    return float(values.mean())
 
 
 def render_market_growth_chart(
@@ -1248,6 +1241,7 @@ def render_market_pdb_annual_distribution(
     df_source: pd.DataFrame,
 ) -> None:
     pdb_by_year = load_market_pdb_data()
+    arrivals_by_year = load_market_arrivals_seasonality_data()
     if not pdb_by_year:
         st.warning("Ne najdem datotek za PDB po trgih.")
         return
@@ -1265,6 +1259,8 @@ def render_market_pdb_annual_distribution(
     if municipality_annual_df is None or municipality_annual_df.empty:
         st.warning("V PDB datoteki manjka del z letnim povprečjem za list »Občine«.")
         return
+    arrivals_book = arrivals_by_year.get(selected_year, {})
+    municipality_arrivals_df = arrivals_book.get("Občine")
 
     if mode == "Celotno območje":
         sheet_key = get_seasonality_sheet_key(view_title, group_col)
@@ -1280,6 +1276,14 @@ def render_market_pdb_annual_distribution(
             st.info("Za izbrano območje ni podatkov o letnem povprečju PDB po trgih.")
             return
 
+        area_arrivals_aggregate_df = arrivals_book.get(sheet_key or "")
+        area_arrivals_subset = get_market_monthly_area_subset(
+            monthly_sheet=municipality_arrivals_df if municipality_arrivals_df is not None else pd.DataFrame(),
+            aggregate_sheet=area_arrivals_aggregate_df,
+            selected_group=selected_group,
+            group_col=group_col,
+        )
+
         with st.container(border=True):
             render_section_heading(
                 f"PDB po trgih – letno povprečje: {selected_group}",
@@ -1290,12 +1294,21 @@ def render_market_pdb_annual_distribution(
                 municipality_annual_df["__label__"].apply(normalize_name) == normalize_name("SLOVENIJA")
             ].copy()
             slovenia_annual_df = compute_market_annual_average_for_subset(slovenia_subset)
+            slovenia_arrivals_subset = (
+                municipality_arrivals_df[
+                    municipality_arrivals_df["__label__"].apply(normalize_name) == normalize_name("SLOVENIJA")
+                ].copy()
+                if municipality_arrivals_df is not None and not municipality_arrivals_df.empty
+                else pd.DataFrame()
+            )
+            area_arrivals_weights = compute_market_monthly_structure_for_subset(area_arrivals_subset)
+            slovenia_arrivals_weights = compute_market_monthly_structure_for_subset(slovenia_arrivals_subset)
             render_market_pdb_annual_chart(
                 annual_df,
                 f"PDB po trgih – letno povprečje ({selected_year})",
                 reference_lines=[
-                    (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(annual_df, "Vrednost"), AREA_REFERENCE_COLOR),
-                    ("Povprečje vseh trgov v Sloveniji", compute_average_reference_value(slovenia_annual_df, "Vrednost"), SECONDARY_REFERENCE_COLOR),
+                    (MARKET_AVERAGE_DISPLAY_LABEL, compute_market_weighted_mean_from_frames(annual_df, area_arrivals_weights), AREA_REFERENCE_COLOR),
+                    ("Povprečje vseh trgov v Sloveniji", compute_market_weighted_mean_from_frames(slovenia_annual_df, slovenia_arrivals_weights), SECONDARY_REFERENCE_COLOR),
                 ],
             )
         return
@@ -1338,12 +1351,28 @@ def render_market_pdb_annual_distribution(
             group_col=group_col,
         )
         area_annual_df = compute_market_annual_average_for_subset(area_subset)
+        muni_arrivals_subset = (
+            municipality_arrivals_df[
+                municipality_arrivals_df["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
+            ].copy()
+            if municipality_arrivals_df is not None and not municipality_arrivals_df.empty
+            else pd.DataFrame()
+        )
+        area_arrivals_entry = arrivals_book.get(area_sheet_key or "")
+        area_arrivals_subset = get_market_monthly_area_subset(
+            monthly_sheet=municipality_arrivals_df if municipality_arrivals_df is not None else pd.DataFrame(),
+            aggregate_sheet=area_arrivals_entry,
+            selected_group=selected_group,
+            group_col=group_col,
+        )
+        area_arrivals_weights = compute_market_monthly_structure_for_subset(area_arrivals_subset)
+        muni_arrivals_weights = compute_market_monthly_structure_for_subset(muni_arrivals_subset)
         render_market_pdb_annual_chart(
             annual_df,
             f"{chosen_muni} – PDB po trgih, letno povprečje ({selected_year})",
             reference_lines=[
-                (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(area_annual_df, "Vrednost"), AREA_REFERENCE_COLOR),
-                ("Povprečje vseh trgov v občini", compute_average_reference_value(annual_df, "Vrednost"), SECONDARY_REFERENCE_COLOR),
+                (MARKET_AVERAGE_DISPLAY_LABEL, compute_market_weighted_mean_from_frames(area_annual_df, area_arrivals_weights), AREA_REFERENCE_COLOR),
+                ("Povprečje vseh trgov v občini", compute_market_weighted_mean_from_frames(annual_df, muni_arrivals_weights), SECONDARY_REFERENCE_COLOR),
             ],
         )
 
@@ -1509,7 +1538,6 @@ def _add_reference_legend_entry(
 
 def should_use_share_pie_chart(indicator: str, values: pd.Series) -> bool:
     if is_rate_like(indicator) or indicator in INDIKATORJI_Z_INDEKSI:
-        print("here")
         return False
     numeric_values = pd.to_numeric(values, errors="coerce").dropna()
     if numeric_values.empty:
@@ -1813,11 +1841,6 @@ def render_market_growth_distribution(
             base_year=base_year,
             target_year=target_year,
         )
-        slovenia_growth_df = compute_market_growth_for_subset(
-            growth_numeric_df,
-            base_year=base_year,
-            target_year=target_year,
-        )
         st.markdown(f"### {selected_group}")
         chart_col, table_col = st.columns([1.4, 1])
         with chart_col:
@@ -1825,8 +1848,8 @@ def render_market_growth_distribution(
                 growth_df,
                 f"Rast števila prenočitev po trgih ({selected_period})",
                 reference_lines=[
-                    (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(growth_df, "Rast_raw"), AREA_REFERENCE_COLOR),
-                    ("Povprečje vseh trgov v Sloveniji", compute_average_reference_value(slovenia_growth_df, "Rast_raw"), SECONDARY_REFERENCE_COLOR),
+                    (MARKET_AVERAGE_DISPLAY_LABEL, compute_market_growth_weighted_mean(subset, base_year=base_year, target_year=target_year), AREA_REFERENCE_COLOR),
+                    ("Povprečje vseh trgov v Sloveniji", compute_market_growth_weighted_mean(growth_numeric_df, base_year=base_year, target_year=target_year), SECONDARY_REFERENCE_COLOR),
                 ],
             )
         with table_col:
@@ -1851,20 +1874,14 @@ def render_market_growth_distribution(
         base_year=base_year,
         target_year=target_year,
     )
-    area_growth_df = compute_market_growth_for_subset(
-        subset,
-        base_year=base_year,
-        target_year=target_year,
-    )
-
     chart_col, table_col = st.columns([1.4, 1])
     with chart_col:
         render_market_growth_chart(
             growth_df,
             f"{chosen_muni} – rast števila prenočitev po trgih ({selected_period})",
             reference_lines=[
-                (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(area_growth_df, "Rast_raw"), AREA_REFERENCE_COLOR),
-                ("Povprečje vseh trgov v občini", compute_average_reference_value(growth_df, "Rast_raw"), SECONDARY_REFERENCE_COLOR),
+                (MARKET_AVERAGE_DISPLAY_LABEL, compute_market_growth_weighted_mean(subset, base_year=base_year, target_year=target_year), AREA_REFERENCE_COLOR),
+                ("Povprečje vseh trgov v občini", compute_market_growth_weighted_mean(municipality_subset, base_year=base_year, target_year=target_year), SECONDARY_REFERENCE_COLOR),
             ],
         )
     with table_col:
