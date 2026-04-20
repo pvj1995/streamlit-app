@@ -733,6 +733,7 @@ def compute_market_growth_for_subset(
 
 
 MARKET_MONTH_ORDER = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"]
+MARKET_TOTAL_SOURCE_LABEL = "SKUPAJ VSI TRGI"
 
 
 def compute_market_seasonality_for_subset(
@@ -756,7 +757,7 @@ def compute_market_seasonality_for_subset(
 
         market_label = match.group(1).strip()
         month_label = match.group(2).lower()
-        if market_label == "SKUPAJ VSI TRGI" and not include_total_market:
+        if market_label == MARKET_TOTAL_SOURCE_LABEL and not include_total_market:
             continue
 
         if market_label not in market_order:
@@ -784,6 +785,43 @@ def compute_market_seasonality_for_subset(
         na_position="last",
     ).reset_index(drop=True)
     return seasonality_df.drop(columns=["_market_order", "_month_order"])
+
+
+def compute_market_monthly_average_from_seasonality(seasonality_df: pd.DataFrame) -> pd.DataFrame:
+    if seasonality_df.empty:
+        return pd.DataFrame(columns=["Mesec", "Vrednost"])
+
+    filtered = seasonality_df[seasonality_df["Trg"] != MARKET_TOTAL_SOURCE_LABEL].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=["Mesec", "Vrednost"])
+
+    month_order = {month: index for index, month in enumerate(MARKET_MONTH_ORDER)}
+    average_df = (
+        filtered.groupby("Mesec", dropna=False, as_index=False)
+        .agg(Vrednost=("Vrednost", "mean"))
+    )
+    average_df["_month_order"] = average_df["Mesec"].map(month_order)
+    average_df = average_df.sort_values("_month_order", ascending=True, na_position="last").reset_index(drop=True)
+    return average_df.drop(columns=["_month_order"])
+
+
+def compute_market_monthly_total_from_seasonality(seasonality_df: pd.DataFrame) -> pd.DataFrame:
+    if seasonality_df.empty:
+        return pd.DataFrame(columns=["Mesec", "Vrednost"])
+
+    month_order = {month: index for index, month in enumerate(MARKET_MONTH_ORDER)}
+    total_rows = seasonality_df[seasonality_df["Trg"] == MARKET_TOTAL_SOURCE_LABEL].copy()
+    if total_rows.empty:
+        total_rows = (
+            seasonality_df.groupby("Mesec", dropna=False, as_index=False)
+            .agg(Vrednost=("Vrednost", "sum"))
+        )
+    else:
+        total_rows = total_rows[["Mesec", "Vrednost"]].copy()
+
+    total_rows["_month_order"] = total_rows["Mesec"].map(month_order)
+    total_rows = total_rows.sort_values("_month_order", ascending=True, na_position="last").reset_index(drop=True)
+    return total_rows.drop(columns=["_month_order"])
 
 
 def compute_market_monthly_structure_for_subset(

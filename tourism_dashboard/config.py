@@ -518,7 +518,7 @@ SKUPNO_OPOZORILO_AGREGACIJA = {
 GINI_CHANGE_2024_2019 = {
     "Slovenska Istra": 102.0,
     "Julijske Alpe": 108.7,
-    "Gorenjska": 128.3,
+    "Predalpska Slovenija (vzh.Gorenjska)": 128.3,
     "Goriško, Vipava, Kras": 117.2,
     "Savinjsko, Celje, Obsotelje in Kozjansko": 112.3,
     "Dolenjska, Bela Krajina in Kočevsko": 99.7,
@@ -579,7 +579,7 @@ GINI_CHANGE_2024_2019 = {
 GINI_2025_VALUES = {
     "Slovenska Istra": 0.3764876496411522,
     "Julijske Alpe": 0.4452252370330385,
-    "Gorenjska": 0.324787552694939,
+    "Predalpska Slovenija (vzh.Gorenjska)": 0.324787552694939,
     "Goriško, Vipava, Kras": 0.3414449949424754,
     "Savinjsko, Celje, Obsotelje in Kozjansko": 0.1055199517632115,
     "Dolenjska, Bela Krajina in Kočevsko": 0.21124381463520803,
@@ -640,7 +640,7 @@ GINI_2025_VALUES = {
 GINI_CHANGE_2025_2019 = {
     "Slovenska Istra": 100.35428320601302,
     "Julijske Alpe": 109.08183907036356,
-    "Gorenjska": 138.17761836782358,
+    "Predalpska Slovenija (vzh.Gorenjska)": 138.17761836782358,
     "Goriško, Vipava, Kras": 123.93983073505606,
     "Savinjsko, Celje, Obsotelje in Kozjansko": 114.17358932883543,
     "Dolenjska, Bela Krajina in Kočevsko": 99.37950296201717,

@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 
 from tourism_dashboard.config import SLO_BOUNDS
 from tourism_dashboard.formatting import format_indicator_value_map
-from tourism_dashboard.helpers import normalize_name
+from tourism_dashboard.helpers import get_indicator_display_name, normalize_name
 
 MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE = 0.00010
 REGION_DISPLAY_SIMPLIFY_TOLERANCE = 0.0005
@@ -239,7 +239,7 @@ def build_regions_map_html(
         style_function=style_fn,
         tooltip=folium_module.GeoJsonTooltip(
             fields=[group_col, "_vrednost_fmt"],
-            aliases=["Območje:", f"{indicator_label}:"],
+            aliases=["Območje:", f"{get_indicator_display_name(indicator_label)}:"],
             sticky=True,
         ),
     ).add_to(map_obj)
@@ -348,7 +348,7 @@ def build_municipalities_map_html(
         style_function=style_in,
         tooltip=folium_module.GeoJsonTooltip(
             fields=[name_prop, "_vrednost_fmt"],
-            aliases=["Občina:", f"{indicator_label}:"],
+            aliases=["Občina:", f"{get_indicator_display_name(indicator_label)}:"],
             sticky=True,
         ),
     ).add_to(map_obj)

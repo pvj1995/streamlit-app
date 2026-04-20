@@ -126,6 +126,19 @@ def col_for_year(col_name: str, year: int) -> str:
     return re.sub(r"(19|20)\d{2}", str(year), col_name)
 
 
+def indicator_has_explicit_year(indicator: str) -> bool:
+    return bool(re.search(r"(19|20)\d{2}", safe_str(indicator)))
+
+
+def get_indicator_display_name(indicator: str) -> str:
+    indicator_name = safe_str(indicator)
+    if not indicator_name:
+        return indicator_name
+    if indicator_has_explicit_year(indicator_name):
+        return indicator_name
+    return f"{indicator_name} 2024"
+
+
 def load_excel(path_or_buffer, sheet_name: int | str = 0) -> pd.DataFrame:
     header_df = pd.read_excel(path_or_buffer, header=0, sheet_name=sheet_name)
     municipality_col = find_col(header_df, ["obcine", "obcina"])

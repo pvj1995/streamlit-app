@@ -20,7 +20,9 @@ from tourism_dashboard.analytics import (
     build_top_bottom_group_sections,
     build_market_ai_context,
     compute_market_annual_average_for_subset,
+    compute_market_monthly_average_from_seasonality,
     compute_market_monthly_structure_for_subset,
+    compute_market_monthly_total_from_seasonality,
     compute_market_seasonality_for_subset,
     compute_market_structure_for_subset,
     compute_region_aggregates,
@@ -56,6 +58,7 @@ from tourism_dashboard.formatting import (
 )
 from tourism_dashboard.helpers import (
     get_secret_value,
+    get_indicator_display_name,
     shorten_label,
     col_for_year,
     load_market_arrivals_seasonality_data,
@@ -319,7 +322,17 @@ def build_region_indicator_table(
 def format_indicator_option_label(indicator: str, indicator_to_group: dict[str, str]) -> str:
     group_name = indicator_to_group[indicator] if indicator in indicator_to_group else ""
     emoji = GROUP_COLOR_EMOJI[group_name] if group_name in GROUP_COLOR_EMOJI else "•"
-    return f"{emoji} {indicator}"
+    return f"{emoji} {get_indicator_display_name(indicator)}"
+
+
+def rename_indicator_columns_for_display(
+    df: pd.DataFrame,
+    indicators: list[str],
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    rename_map = {indicator: get_indicator_display_name(indicator) for indicator in indicators if indicator in df.columns}
+    display_df = df.rename(columns=rename_map)
+    source_columns = {display_name: raw_name for raw_name, display_name in rename_map.items()}
+    return display_df, source_columns
 
 
 def prepend_rank_column(df: pd.DataFrame, column_name: str = "#") -> pd.DataFrame:
@@ -494,6 +507,31 @@ def format_growth_label(value: float) -> str:
     return format_pct(float(value) * 100.0, 1)
 
 
+MARKET_AVERAGE_DISPLAY_LABEL = "Povprečje vseh trgov na območju"
+MARKET_TOTAL_DISPLAY_LABEL = "Vsi trgi na območju skupaj"
+MARKET_AVERAGE_COLOR = "#0f766e"
+MARKET_TOTAL_FILL_COLOR = "rgba(15, 23, 42, 0.12)"
+MARKET_TOTAL_LINE_COLOR = "#334155"
+
+
+def append_market_average_row(
+    df: pd.DataFrame,
+    *,
+    value_col: str,
+    label_col: str = "Trg",
+    label: str = MARKET_AVERAGE_DISPLAY_LABEL,
+) -> pd.DataFrame:
+    if df.empty or value_col not in df.columns or label_col not in df.columns:
+        return df
+
+    values = pd.to_numeric(df[value_col], errors="coerce").dropna()
+    if values.empty:
+        return df
+
+    average_row = pd.DataFrame([{label_col: label, value_col: float(values.mean())}])
+    return pd.concat([df, average_row], ignore_index=True)
+
+
 def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
     if growth_df.empty:
         st.info("Za izbran prikaz ni dovolj podatkov o rasti po trgih.")
@@ -504,11 +542,17 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
         st.info("Za izbran prikaz ni dovolj podatkov o rasti po trgih.")
         return
 
-    chart_df["Trg"] = chart_df["Trg"].apply(normalize_market_display_label)
+    chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
+    chart_df = append_market_average_row(chart_df, value_col="Rast_raw", label_col="Trg_full")
     chart_df = chart_df.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
-    chart_df["Trg_chart"] = chart_df["Trg"].apply(shorten_market_axis_label).apply(wrap_market_chart_label)
+    chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
+    chart_df["Trg_chart"] = chart_df["Trg"].apply(wrap_market_chart_label)
     chart_df["Rast_prikaz"] = chart_df["Rast_raw"]
     chart_df["Rast_label"] = chart_df["Rast_raw"].apply(format_growth_label)
+    growth_color_map = {
+        **get_market_chart_color_map(),
+        MARKET_AVERAGE_DISPLAY_LABEL: MARKET_AVERAGE_COLOR,
+    }
 
     max_abs_growth = float(np.nanmax(np.abs(chart_df["Rast_raw"].values)))
     if not np.isfinite(max_abs_growth) or max_abs_growth <= 0:
@@ -522,9 +566,9 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
         x="Trg_chart",
         y="Rast_prikaz",
         color="Trg",
-        color_discrete_map=MARKET_COLOR_MAP,
+        color_discrete_map=growth_color_map,
         text="Rast_label",
-        custom_data=["Trg", "Rast_label"],
+        custom_data=["Trg_full", "Rast_label"],
     )
     fig.update_traces(
         cliponaxis=False,
@@ -572,6 +616,8 @@ def render_market_seasonality_chart(
     value_title: str = "Število prenočitev",
     empty_message: str = "Za izbran prikaz ni dovolj podatkov o sezonskosti prenočitev po trgih.",
     hover_indicator: str = "Prenočitve turistov SKUPAJ - 2025",
+    add_market_average_line: bool = False,
+    add_total_area_secondary: bool = False,
 ) -> None:
     if seasonality_df.empty:
         st.info(empty_message)
@@ -583,6 +629,8 @@ def render_market_seasonality_chart(
         return
 
     month_order = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"]
+    total_df = compute_market_monthly_total_from_seasonality(chart_df) if add_total_area_secondary else pd.DataFrame()
+    average_df = compute_market_monthly_average_from_seasonality(chart_df) if add_market_average_line else pd.DataFrame()
     chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
     chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
     chart_df["Mesec"] = pd.Categorical(chart_df["Mesec"], categories=month_order, ordered=True)
@@ -592,30 +640,94 @@ def render_market_seasonality_chart(
     )
 
     st.markdown(f"**{title}**")
-    fig = px.line(
-        chart_df,
-        x="Mesec",
-        y="Vrednost",
-        color="Trg",
-        markers=True,
-        color_discrete_map=get_market_chart_color_map(),
-        category_orders={"Mesec": month_order},
-        custom_data=["Vrednost_prikaz", "Trg_full"],
-    )
-    fig.update_traces(
-        line=dict(width=3),
-        marker=dict(size=7),
-        hovertemplate="<b>%{customdata[1]}</b><br>%{x}: %{customdata[0]}<extra></extra>",
-    )
+    fig = go.Figure()
+
+    if not total_df.empty:
+        total_df = total_df.copy()
+        total_df["Mesec"] = pd.Categorical(total_df["Mesec"], categories=month_order, ordered=True)
+        total_df = total_df.sort_values("Mesec").reset_index(drop=True)
+        total_df["Vrednost_prikaz"] = total_df["Vrednost"].apply(
+            lambda value: format_indicator_value_map(hover_indicator, value)
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=total_df["Mesec"],
+                y=total_df["Vrednost"],
+                mode="lines",
+                name=MARKET_TOTAL_DISPLAY_LABEL,
+                yaxis="y2",
+                line=dict(color=MARKET_TOTAL_LINE_COLOR, width=2),
+                fill="tozeroy",
+                fillcolor=MARKET_TOTAL_FILL_COLOR,
+                hovertemplate="<b>" + MARKET_TOTAL_DISPLAY_LABEL + "</b><br>%{x}: %{customdata}<extra></extra>",
+                customdata=total_df["Vrednost_prikaz"],
+            )
+        )
+
+    market_color_map = get_market_chart_color_map()
+    for short_label in chart_df["Trg"].drop_duplicates().tolist():
+        group_df = chart_df[chart_df["Trg"] == short_label].copy()
+        full_label = str(group_df["Trg_full"].iloc[0])
+        fig.add_trace(
+            go.Scatter(
+                x=group_df["Mesec"],
+                y=group_df["Vrednost"],
+                mode="lines+markers",
+                name=short_label,
+                line=dict(color=market_color_map.get(short_label, "#2563eb"), width=3),
+                marker=dict(size=7),
+                customdata=np.column_stack([group_df["Vrednost_prikaz"], group_df["Trg_full"]]),
+                hovertemplate="<b>%{customdata[1]}</b><br>%{x}: %{customdata[0]}<extra></extra>",
+            )
+        )
+
+    if not average_df.empty:
+        average_df = average_df.copy()
+        average_df["Mesec"] = pd.Categorical(average_df["Mesec"], categories=month_order, ordered=True)
+        average_df = average_df.sort_values("Mesec").reset_index(drop=True)
+        average_df["Vrednost_prikaz"] = average_df["Vrednost"].apply(
+            lambda value: format_indicator_value_map(hover_indicator, value)
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=average_df["Mesec"],
+                y=average_df["Vrednost"],
+                mode="lines+markers",
+                name=MARKET_AVERAGE_DISPLAY_LABEL,
+                line=dict(color=MARKET_AVERAGE_COLOR, width=3, dash="dash"),
+                marker=dict(size=6),
+                customdata=average_df["Vrednost_prikaz"],
+                hovertemplate="<b>" + MARKET_AVERAGE_DISPLAY_LABEL + "</b><br>%{x}: %{customdata}<extra></extra>",
+            )
+        )
+
+    yaxis_config: dict[str, Any] = {"title": value_title}
+    layout_kwargs: dict[str, Any] = {}
+    if add_total_area_secondary and not total_df.empty:
+        left_max = float(pd.to_numeric(chart_df["Vrednost"], errors="coerce").max())
+        right_max = float(pd.to_numeric(total_df["Vrednost"], errors="coerce").max())
+        left_limit = left_max * 1.08 if np.isfinite(left_max) and left_max > 0 else 1.0
+        right_limit = right_max * 1.08 if np.isfinite(right_max) and right_max > 0 else 1.0
+        yaxis_config["range"] = [0, left_limit]
+        layout_kwargs["yaxis2"] = {
+            "title": f"{value_title} – vsi trgi",
+            "overlaying": "y",
+            "side": "right",
+            "range": [0, right_limit],
+            "showgrid": False,
+            "rangemode": "tozero",
+        }
+
     fig.update_layout(
         margin=dict(t=20, b=10, l=10, r=10),
         xaxis_title="Meseci",
-        yaxis_title=value_title,
+        yaxis=yaxis_config,
         legend_title_text="Skupine trgov",
         hovermode="x unified",
         height=520,
+        **layout_kwargs,
     )
-    fig.update_xaxes(type="category")
+    fig.update_xaxes(type="category", categoryorder="array", categoryarray=month_order)
     st.plotly_chart(fig, width="stretch")
 
 
@@ -630,10 +742,15 @@ def render_market_pdb_annual_chart(annual_df: pd.DataFrame, title: str) -> None:
         return
 
     chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
+    chart_df = append_market_average_row(chart_df, value_col="Vrednost", label_col="Trg_full")
     chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
     chart_df = chart_df.sort_values("Vrednost", ascending=True).reset_index(drop=True)
     chart_df["Trg_chart"] = chart_df["Trg"].apply(wrap_market_chart_label)
     chart_df["Vrednost_label"] = chart_df["Vrednost"].apply(lambda value: format_si_number(value, 1))
+    pdb_color_map = {
+        **get_market_chart_color_map(),
+        MARKET_AVERAGE_DISPLAY_LABEL: MARKET_AVERAGE_COLOR,
+    }
 
     st.markdown(f"**{title}**")
     fig = px.bar(
@@ -642,7 +759,7 @@ def render_market_pdb_annual_chart(annual_df: pd.DataFrame, title: str) -> None:
         y="Trg_chart",
         orientation="h",
         color="Trg",
-        color_discrete_map=get_market_chart_color_map(),
+        color_discrete_map=pdb_color_map,
         text="Vrednost_label",
         custom_data=["Trg_full", "Vrednost_label"],
     )
@@ -822,7 +939,11 @@ def render_market_overnight_seasonality_distribution(
                 f"Linijski prikaz mesečnega gibanja prenočitev po skupinah trgov za leto {selected_year}.",
             )
             chart_df = compute_market_seasonality_for_subset(area_subset)
-            render_market_seasonality_chart(chart_df, f"Sezonskost prenočitev po trgih ({selected_year})")
+            render_market_seasonality_chart(
+                chart_df,
+                f"Sezonskost prenočitev po trgih ({selected_year})",
+                add_total_area_secondary=True,
+            )
         return
 
     filtered_source = df_source[df_source[group_col].notna()].copy()
@@ -858,6 +979,7 @@ def render_market_overnight_seasonality_distribution(
         render_market_seasonality_chart(
             chart_df,
             f"{chosen_muni} – sezonskost prenočitev po trgih ({selected_year})",
+            add_total_area_secondary=True,
         )
 
 
@@ -1020,6 +1142,7 @@ def render_market_arrivals_seasonality_distribution(
                 value_title="Število prihodov",
                 empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti prihodov po trgih.",
                 hover_indicator="Prihodi turistov SKUPAJ - 2025",
+                add_total_area_secondary=True,
             )
         return
 
@@ -1060,6 +1183,7 @@ def render_market_arrivals_seasonality_distribution(
             value_title="Število prihodov",
             empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti prihodov po trgih.",
             hover_indicator="Prihodi turistov SKUPAJ - 2025",
+            add_total_area_secondary=True,
         )
 
 
@@ -1203,6 +1327,7 @@ def render_market_pdb_seasonality_distribution(
                 value_title="PDB",
                 empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
                 hover_indicator="PDB turistov SKUPAJ - 2025",
+                add_market_average_line=True,
             )
         return
 
@@ -1240,6 +1365,7 @@ def render_market_pdb_seasonality_distribution(
             value_title="PDB",
             empty_message="Za izbran prikaz ni dovolj podatkov o sezonskosti PDB po trgih.",
             hover_indicator="PDB turistov SKUPAJ - 2025",
+            add_market_average_line=True,
         )
 
 
@@ -1334,6 +1460,7 @@ def render_comparison_indicator_chart(
     area_reference_value: float | None = None,
     area_reference_label: str = "Območje",
 ) -> None:
+    display_indicator = get_indicator_display_name(indicator)
     plot_df = chart_df[[label_col, value_col]].copy()
     plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
     plot_df = plot_df.dropna(subset=[value_col])
@@ -1341,9 +1468,10 @@ def render_comparison_indicator_chart(
         st.info("Za izbrani kazalnik ni dovolj podatkov za grafični prikaz.")
         return
 
-    st.markdown(f"**{title}**")
+    
 
     if should_use_share_pie_chart(indicator, plot_df[value_col]):
+        st.markdown(f"**{title}** ***(delež)***")
         plot_df = plot_df.sort_values(value_col, ascending=False).reset_index(drop=True)
         total_value = float(plot_df[value_col].sum())
         if total_value <= 0:
@@ -1387,6 +1515,7 @@ def render_comparison_indicator_chart(
     plot_df = plot_df.sort_values(value_col, ascending=False).reset_index(drop=True)
     plot_df["Value_label"] = plot_df[value_col].apply(lambda value: format_indicator_value_map(indicator, value))
     orientation = "h" if should_use_horizontal_chart(plot_df[label_col]) else "v"
+    st.markdown(f"**{title}** ***(vrednost)***")
 
     if orientation == "h":
         fig = px.bar(
@@ -1406,7 +1535,7 @@ def render_comparison_indicator_chart(
             margin=dict(t=20, b=10, l=10, r=10),
             showlegend=False,
             height=max(380, 42 * len(plot_df) + 80),
-            xaxis_title=indicator,
+            xaxis_title=display_indicator,
             yaxis_title=None,
         )
         fig.update_yaxes(autorange="reversed")
@@ -1432,7 +1561,7 @@ def render_comparison_indicator_chart(
             showlegend=False,
             height=430,
             xaxis_title=None,
-            yaxis_title=indicator,
+            yaxis_title=display_indicator,
             uniformtext_minsize=10,
             uniformtext_mode="hide",
         )
@@ -1688,10 +1817,14 @@ def render_region_top_bottom_and_ai(
             best_col, worst_col = st.columns(2)
             with best_col:
                 st.markdown(f"**Najboljši {section['group']}**")
-                render_ranked_dataframe(section["best_df"][table_cols])
+                best_table_df = section["best_df"][table_cols].copy()
+                best_table_df["Kazalnik"] = best_table_df["Kazalnik"].apply(get_indicator_display_name)
+                render_ranked_dataframe(best_table_df)
             with worst_col:
                 st.markdown(f"**Najslabši {section['group']}**")
-                render_ranked_dataframe(section["worst_df"][table_cols])
+                worst_table_df = section["worst_df"][table_cols].copy()
+                worst_table_df["Kazalnik"] = worst_table_df["Kazalnik"].apply(get_indicator_display_name)
+                render_ranked_dataframe(worst_table_df)
             show_shared_warning_if_needed_map(section['group'])
 
     st.markdown("---")
@@ -1866,16 +1999,21 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         for column in cols_to_show[1:]:
             show_df[column] = show_df[column].apply(lambda value: format_indicator_value_tables(column, value))
         show_df = prefix_rank_to_label_column(show_df, group_col)
+        show_df, display_source_columns = rename_indicator_columns_for_display(show_df, agg_needed)
         comparison_widths: dict[str, ColumnWidth] = {group_col: "large"}
         for column in agg_needed:
-            comparison_widths[column] = "medium"
+            comparison_widths[get_indicator_display_name(column)] = "medium"
 
         st.dataframe(
             show_df,
             width='stretch',
             height=260,
             hide_index=True,
-            column_config=make_localized_column_config(show_df, width_overrides=comparison_widths),
+            column_config=make_localized_column_config(
+                show_df,
+                source_columns=display_source_columns,
+                width_overrides=comparison_widths,
+            ),
         )
         st.caption(
             "Rang v tabeli sledi izbiri »Razvrsti po«. "
@@ -1898,14 +2036,14 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             label_col=group_col,
             value_col=chart_indicator,
             indicator=chart_indicator,
-            title="Grafična primerjava območij",
+            title=f"Grafična primerjava območij - {chart_indicator}",
             slovenia_value=df_slo_total_num.get(chart_indicator, np.nan),
         )
 
         _, _, kpi_col = st.columns([1, 2, 1])
         with kpi_col:
             green_metric(
-                f" Celotna Slovenija - {map_indicator}",
+                f" Celotna Slovenija - {get_indicator_display_name(map_indicator)}",
                 format_indicator_value_map(map_indicator, df_slo_total_num.get(map_indicator, np.nan)),
             )
     else:
@@ -1919,13 +2057,16 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         left_kpi, right_kpi = st.columns([1.2, 1])
         with left_kpi:
             st.metric(
-                map_indicator,
+                get_indicator_display_name(map_indicator),
                 f"{format_indicator_value_map(map_indicator, region_total)}",
                 main_delta_text,
             )
             st.caption("Opomba: »Delež v Sloveniji« je prikazan za kazalnike, kjer se vrednosti seštevajo (ne za stopnje/indekse).")
         with right_kpi:
-            green_metric(f" Celotna Slovenija - {map_indicator}", format_indicator_value_map(map_indicator, sl_total))
+            green_metric(
+                f" Celotna Slovenija - {get_indicator_display_name(map_indicator)}",
+                format_indicator_value_map(map_indicator, sl_total),
+            )
 
         if ctx.dashboard_mode and dash_inds:
             kpi_cols = st.columns(min(6, len(dash_inds)))
@@ -1938,7 +2079,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                         green_metric_small("Slovenija", format_indicator_value_map(indicator, slovenia_value))
 
                     st.metric(
-                        indicator,
+                        get_indicator_display_name(indicator),
                         format_indicator_value_map(indicator, region_value),
                         build_slovenia_metric_delta(indicator, region_value, slovenia_value),
                     )
@@ -2036,7 +2177,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
     with table_col:
         if selected_region == "Vsa območja":
-            st.subheader(f"Tabela območij \n \n **:blue[{map_indicator}]**")
+            st.subheader(f"Tabela območij \n \n **:blue[{get_indicator_display_name(map_indicator)}]**")
             table = region_agg[[group_col, map_indicator]].copy()
             table = table.sort_values(map_indicator, ascending=False, na_position="last")
             table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
@@ -2047,7 +2188,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                 height=680,
             )
         else:
-            st.subheader(f"Tabela občin znotraj območja \n \n **:blue[{map_indicator}]**")
+            st.subheader(f"Tabela občin znotraj območja \n \n **:blue[{get_indicator_display_name(map_indicator)}]**")
             region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, None)
             table = build_region_indicator_table(region_df, map_indicator, region_total, view_title)
             render_ranked_dataframe(
@@ -2102,7 +2243,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                 key=f"municipality_chart_indicator_{group_col}",
                 format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
             )
-        st.subheader(f":blue[{chart_indicator}]")
+        st.subheader(f":blue[{get_indicator_display_name(chart_indicator)}]")
         region_chart_total = aggregate_indicator_with_rules(region_df, chart_indicator, AGG_RULES, selected_region)
         municipality_chart_df = region_df[[ "Občine", chart_indicator]].copy()
         render_comparison_indicator_chart(
