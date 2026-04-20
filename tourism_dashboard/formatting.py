@@ -43,7 +43,7 @@ def is_rate_like(column_name: str) -> bool:
         "Rast števila prenočitev 2025/2019 - Tuji",
         "Rast števila prenočitev 2025/2024 - SKUPAJ",
         "Rast števila prenočitev 2025/2024 - Domači",
-        "Rast števila prenočitev 2025/2024 - Tuji"
+        "Rast števila prenočitev 2025/2024 - Tuji",
         "Delež stalnih ležišč v Hotelih ipd.",
         "Delež sob (ned.enot) v kapacitetah višje kakovosti - (4* in 5*) 2025",
         "Delež sob (enot) v hotelih ipd. NO 2025",

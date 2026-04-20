@@ -510,29 +510,27 @@ def format_growth_label(value: float) -> str:
 MARKET_AVERAGE_DISPLAY_LABEL = "Povprečje vseh trgov na območju"
 MARKET_TOTAL_DISPLAY_LABEL = "Vsi trgi na območju skupaj"
 MARKET_AVERAGE_COLOR = "#0f766e"
-MARKET_TOTAL_FILL_COLOR = "rgba(15, 23, 42, 0.12)"
-MARKET_TOTAL_LINE_COLOR = "#334155"
+MARKET_TOTAL_FILL_COLOR = "rgba(134, 239, 172, 0.28)"
+MARKET_TOTAL_LINE_COLOR = "rgba(134, 239, 172, 0.0)"
+AREA_REFERENCE_COLOR = "#f59e0b"
+SECONDARY_REFERENCE_COLOR = "#dc2626"
 
 
-def append_market_average_row(
-    df: pd.DataFrame,
-    *,
-    value_col: str,
-    label_col: str = "Trg",
-    label: str = MARKET_AVERAGE_DISPLAY_LABEL,
-) -> pd.DataFrame:
-    if df.empty or value_col not in df.columns or label_col not in df.columns:
-        return df
-
+def compute_average_reference_value(df: pd.DataFrame, value_col: str) -> float | None:
+    if df.empty or value_col not in df.columns:
+        return None
     values = pd.to_numeric(df[value_col], errors="coerce").dropna()
     if values.empty:
-        return df
-
-    average_row = pd.DataFrame([{label_col: label, value_col: float(values.mean())}])
-    return pd.concat([df, average_row], ignore_index=True)
+        return None
+    return float(values.mean())
 
 
-def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
+def render_market_growth_chart(
+    growth_df: pd.DataFrame,
+    title: str,
+    *,
+    reference_lines: list[tuple[str, float | None, str]] | None = None,
+) -> None:
     if growth_df.empty:
         st.info("Za izbran prikaz ni dovolj podatkov o rasti po trgih.")
         return
@@ -543,16 +541,11 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
         return
 
     chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
-    chart_df = append_market_average_row(chart_df, value_col="Rast_raw", label_col="Trg_full")
     chart_df = chart_df.sort_values("Rast_raw", ascending=False).reset_index(drop=True)
     chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
     chart_df["Trg_chart"] = chart_df["Trg"].apply(wrap_market_chart_label)
     chart_df["Rast_prikaz"] = chart_df["Rast_raw"]
     chart_df["Rast_label"] = chart_df["Rast_raw"].apply(format_growth_label)
-    growth_color_map = {
-        **get_market_chart_color_map(),
-        MARKET_AVERAGE_DISPLAY_LABEL: MARKET_AVERAGE_COLOR,
-    }
 
     max_abs_growth = float(np.nanmax(np.abs(chart_df["Rast_raw"].values)))
     if not np.isfinite(max_abs_growth) or max_abs_growth <= 0:
@@ -566,7 +559,7 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
         x="Trg_chart",
         y="Rast_prikaz",
         color="Trg",
-        color_discrete_map=growth_color_map,
+        color_discrete_map=get_market_chart_color_map(),
         text="Rast_label",
         custom_data=["Trg_full", "Rast_label"],
     )
@@ -574,12 +567,36 @@ def render_market_growth_chart(growth_df: pd.DataFrame, title: str) -> None:
         cliponaxis=False,
         textposition="outside",
         hovertemplate="<b>%{customdata[0]}</b><br>Rast: %{customdata[1]}<extra></extra>",
+        showlegend=False,
     )
+    has_reference_lines = False
+    for label, value, color in reference_lines or []:
+        if value is None or not np.isfinite(value):
+            continue
+        has_reference_lines = True
+        fig.add_hline(
+            y=float(value),
+            line_color=color,
+            line_dash="dash",
+            line_width=3,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                line=dict(color=color, width=3, dash="dash"),
+                name=f"{label}: {format_growth_label(float(value))}",
+                showlegend=True,
+                hoverinfo="skip",
+            )
+        )
     fig.update_layout(
         margin=dict(t=20, b=20, l=10, r=10),
-        showlegend=False,
+        showlegend=has_reference_lines,
         xaxis_title="Trgi",
         yaxis_title="Rast prenočitev",
+        legend_title_text="Reference",
         uniformtext_minsize=10,
         uniformtext_mode="hide",
     )
@@ -656,7 +673,7 @@ def render_market_seasonality_chart(
                 mode="lines",
                 name=MARKET_TOTAL_DISPLAY_LABEL,
                 yaxis="y2",
-                line=dict(color=MARKET_TOTAL_LINE_COLOR, width=2),
+                line=dict(color=MARKET_TOTAL_LINE_COLOR, width=0),
                 fill="tozeroy",
                 fillcolor=MARKET_TOTAL_FILL_COLOR,
                 hovertemplate="<b>" + MARKET_TOTAL_DISPLAY_LABEL + "</b><br>%{x}: %{customdata}<extra></extra>",
@@ -703,12 +720,14 @@ def render_market_seasonality_chart(
 
     yaxis_config: dict[str, Any] = {"title": value_title}
     layout_kwargs: dict[str, Any] = {}
+    right_margin = 10
     if add_total_area_secondary and not total_df.empty:
         left_max = float(pd.to_numeric(chart_df["Vrednost"], errors="coerce").max())
         right_max = float(pd.to_numeric(total_df["Vrednost"], errors="coerce").max())
         left_limit = left_max * 1.08 if np.isfinite(left_max) and left_max > 0 else 1.0
         right_limit = right_max * 1.08 if np.isfinite(right_max) and right_max > 0 else 1.0
         yaxis_config["range"] = [0, left_limit]
+        right_margin = 150
         layout_kwargs["yaxis2"] = {
             "title": f"{value_title} – vsi trgi",
             "overlaying": "y",
@@ -716,10 +735,18 @@ def render_market_seasonality_chart(
             "range": [0, right_limit],
             "showgrid": False,
             "rangemode": "tozero",
+            "title_standoff": 18,
+            "automargin": True,
+        }
+        layout_kwargs["legend"] = {
+            "x": 1.10,
+            "y": 1.0,
+            "xanchor": "left",
+            "yanchor": "top",
         }
 
     fig.update_layout(
-        margin=dict(t=20, b=10, l=10, r=10),
+        margin=dict(t=20, b=10, l=10, r=right_margin),
         xaxis_title="Meseci",
         yaxis=yaxis_config,
         legend_title_text="Skupine trgov",
@@ -731,7 +758,12 @@ def render_market_seasonality_chart(
     st.plotly_chart(fig, width="stretch")
 
 
-def render_market_pdb_annual_chart(annual_df: pd.DataFrame, title: str) -> None:
+def render_market_pdb_annual_chart(
+    annual_df: pd.DataFrame,
+    title: str,
+    *,
+    reference_lines: list[tuple[str, float | None, str]] | None = None,
+) -> None:
     if annual_df.empty:
         st.info("Za izbran prikaz ni dovolj podatkov o letnem povprečju PDB po trgih.")
         return
@@ -742,15 +774,10 @@ def render_market_pdb_annual_chart(annual_df: pd.DataFrame, title: str) -> None:
         return
 
     chart_df["Trg_full"] = chart_df["Trg"].apply(normalize_market_display_label)
-    chart_df = append_market_average_row(chart_df, value_col="Vrednost", label_col="Trg_full")
     chart_df["Trg"] = chart_df["Trg_full"].apply(shorten_market_axis_label)
     chart_df = chart_df.sort_values("Vrednost", ascending=True).reset_index(drop=True)
     chart_df["Trg_chart"] = chart_df["Trg"].apply(wrap_market_chart_label)
     chart_df["Vrednost_label"] = chart_df["Vrednost"].apply(lambda value: format_si_number(value, 1))
-    pdb_color_map = {
-        **get_market_chart_color_map(),
-        MARKET_AVERAGE_DISPLAY_LABEL: MARKET_AVERAGE_COLOR,
-    }
 
     st.markdown(f"**{title}**")
     fig = px.bar(
@@ -759,7 +786,7 @@ def render_market_pdb_annual_chart(annual_df: pd.DataFrame, title: str) -> None:
         y="Trg_chart",
         orientation="h",
         color="Trg",
-        color_discrete_map=pdb_color_map,
+        color_discrete_map=get_market_chart_color_map(),
         text="Vrednost_label",
         custom_data=["Trg_full", "Vrednost_label"],
     )
@@ -767,12 +794,37 @@ def render_market_pdb_annual_chart(annual_df: pd.DataFrame, title: str) -> None:
         textposition="outside",
         cliponaxis=False,
         hovertemplate="<b>%{customdata[0]}</b><br>PDB: %{customdata[1]}<extra></extra>",
+        showlegend=False,
     )
+    has_reference_lines = False
+    for label, value, color in reference_lines or []:
+        if value is None or not np.isfinite(value):
+            continue
+        has_reference_lines = True
+        fig.add_vline(
+            x=float(value),
+            line_color=color,
+            line_dash="dash",
+            line_width=3,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                line=dict(color=color, width=3, dash="dash"),
+                name=f"{label}: {format_si_number(float(value), 1)}",
+                showlegend=True,
+                hoverinfo="skip",
+            )
+        )
+    fig.update_xaxes(automargin=True)
     fig.update_layout(
         margin=dict(t=20, b=10, l=10, r=30),
-        showlegend=False,
+        showlegend=has_reference_lines,
         xaxis_title="PDB",
         yaxis_title="Trgi",
+        legend_title_text="Reference",
         uniformtext_minsize=10,
         uniformtext_mode="hide",
         height=520,
@@ -1234,9 +1286,17 @@ def render_market_pdb_annual_distribution(
                 f"Vodoravni stolpčni graf letnega povprečja PDB po skupinah trgov za leto {selected_year}.",
             )
             annual_df = compute_market_annual_average_for_subset(area_subset)
+            slovenia_subset = municipality_annual_df[
+                municipality_annual_df["__label__"].apply(normalize_name) == normalize_name("SLOVENIJA")
+            ].copy()
+            slovenia_annual_df = compute_market_annual_average_for_subset(slovenia_subset)
             render_market_pdb_annual_chart(
                 annual_df,
                 f"PDB po trgih – letno povprečje ({selected_year})",
+                reference_lines=[
+                    (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(annual_df, "Vrednost"), AREA_REFERENCE_COLOR),
+                    ("Povprečje vseh trgov v Sloveniji", compute_average_reference_value(slovenia_annual_df, "Vrednost"), SECONDARY_REFERENCE_COLOR),
+                ],
             )
         return
 
@@ -1268,9 +1328,23 @@ def render_market_pdb_annual_distribution(
             municipality_annual_df["__label__"].apply(normalize_name) == normalize_name(chosen_muni)
         ].copy()
         annual_df = compute_market_annual_average_for_subset(muni_subset)
+        area_sheet_key = get_seasonality_sheet_key(view_title, group_col)
+        area_entry = pdb_book.get(area_sheet_key or "")
+        area_annual_df_raw = area_entry.get("annual_avg") if area_entry else None
+        area_subset = get_market_monthly_area_subset(
+            monthly_sheet=municipality_annual_df,
+            aggregate_sheet=area_annual_df_raw,
+            selected_group=selected_group,
+            group_col=group_col,
+        )
+        area_annual_df = compute_market_annual_average_for_subset(area_subset)
         render_market_pdb_annual_chart(
             annual_df,
             f"{chosen_muni} – PDB po trgih, letno povprečje ({selected_year})",
+            reference_lines=[
+                (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(area_annual_df, "Vrednost"), AREA_REFERENCE_COLOR),
+                ("Povprečje vseh trgov v občini", compute_average_reference_value(annual_df, "Vrednost"), SECONDARY_REFERENCE_COLOR),
+            ],
         )
 
 
@@ -1435,6 +1509,7 @@ def _add_reference_legend_entry(
 
 def should_use_share_pie_chart(indicator: str, values: pd.Series) -> bool:
     if is_rate_like(indicator) or indicator in INDIKATORJI_Z_INDEKSI:
+        print("here")
         return False
     numeric_values = pd.to_numeric(values, errors="coerce").dropna()
     if numeric_values.empty:
@@ -1738,12 +1813,21 @@ def render_market_growth_distribution(
             base_year=base_year,
             target_year=target_year,
         )
+        slovenia_growth_df = compute_market_growth_for_subset(
+            growth_numeric_df,
+            base_year=base_year,
+            target_year=target_year,
+        )
         st.markdown(f"### {selected_group}")
         chart_col, table_col = st.columns([1.4, 1])
         with chart_col:
             render_market_growth_chart(
                 growth_df,
                 f"Rast števila prenočitev po trgih ({selected_period})",
+                reference_lines=[
+                    (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(growth_df, "Rast_raw"), AREA_REFERENCE_COLOR),
+                    ("Povprečje vseh trgov v Sloveniji", compute_average_reference_value(slovenia_growth_df, "Rast_raw"), SECONDARY_REFERENCE_COLOR),
+                ],
             )
         with table_col:
             st.markdown("**Tabela**")
@@ -1767,12 +1851,21 @@ def render_market_growth_distribution(
         base_year=base_year,
         target_year=target_year,
     )
+    area_growth_df = compute_market_growth_for_subset(
+        subset,
+        base_year=base_year,
+        target_year=target_year,
+    )
 
     chart_col, table_col = st.columns([1.4, 1])
     with chart_col:
         render_market_growth_chart(
             growth_df,
             f"{chosen_muni} – rast števila prenočitev po trgih ({selected_period})",
+            reference_lines=[
+                (MARKET_AVERAGE_DISPLAY_LABEL, compute_average_reference_value(area_growth_df, "Rast_raw"), AREA_REFERENCE_COLOR),
+                ("Povprečje vseh trgov v občini", compute_average_reference_value(growth_df, "Rast_raw"), SECONDARY_REFERENCE_COLOR),
+            ],
         )
     with table_col:
         st.markdown("**Tabela**")
