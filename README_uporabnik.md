@@ -1,191 +1,236 @@
 # Uporabniški vodič
 
-Aplikacija je namenjena pregledu turističnih kazalnikov za slovenske občine, destinacije, turistične regije in makro destinacije.
+Aplikacija je namenjena pregledu turističnih kazalnikov za slovenske občine,
+destinacije, turistične regije, makro destinacije in Slovenijo.
 
 Omogoča:
 
-- pregled stanja izbranega območja
-- primerjavo z drugimi območji in s Slovenijo
-- zemljevid izbranega kazalnika
+- pregled kazalnikov za izbrano območje
+- primerjavo območij med seboj in s Slovenijo
+- prikaz kazalnikov na zemljevidu
 - top/bottom analizo po skupinah kazalnikov
-- AI komentar in priporočila
-- pregled strukture prenočitev po trgih
+- pregled strukture in sezonskosti turističnega prometa po trgih
+- AI komentar in priporočila, če je AI omogočen
 
-Za tehnične podrobnosti glejte glavni [README](./README.md).
+Tehnična navodila za namestitev, uvoz podatkov in vzdrževanje so v
+[README.md](./README.md).
 
 ## Prijava
 
-Ob odprtju aplikacije se prikaže prijavno okno:
+Ob odprtju aplikacije se prikaže prijavni obrazec.
 
-- `Prijava`
-- polje `Geslo`
-- gumb `Vstopi`
+1. Vnesite geslo.
+2. Kliknite `Vstopi`.
 
-Za uporabo aplikacije je potrebno pravilno geslo.
+Če geslo ni pravilno, aplikacija ostane na prijavnem zaslonu.
 
-## Glavna zavihka
+## Glavna Zavihka
 
 Aplikacija ima dva glavna zavihka:
 
 - `Kazalniki`
-- `Struktura prenočitev po trgih`
+- `Turistični promet in sezonskost po trgih`
 
-## Zavihek `Kazalniki`
+## Stranska Vrstica
+
+V stranski vrstici so osnovne nastavitve:
+
+- nalaganje lastnega Excela
+- nalaganje lastnega GeoJSON-a
+- vklop/izklop dashboard načina
+
+Če lastnih datotek ne naložite, aplikacija uporabi privzete podatke. Na strežniku so
+ti podatki lahko prebrani iz podatkovne baze, če je aplikacija tako nastavljena.
+
+## Zavihek Kazalniki
 
 V tem zavihku lahko:
 
-1. izberete `Pogled`
-2. izberete območje ali `Vsa območja`
-3. izberete skupino kazalnikov s slikovnimi gumbi
-4. izberete `Kazalnik za zemljevid`
-5. po želji dodate do 6 kazalnikov v dashboard prikaz
+1. izberete pogled območij
+2. izberete posamezno območje ali `Vsa območja`
+3. izberete skupino kazalnikov
+4. izberete kazalnik za zemljevid
+5. primerjate območja v tabelah in grafih
+6. pregledate top/bottom analizo
+7. preberete AI komentar, če je na voljo
 
-### Kaj je prikazano
+Pogledi območij so odvisni od stolpcev v podatkih. Običajno so na voljo:
 
-- povzetek izbranega območja
-- primerjava s Slovenijo
-- zemljevid izbranega kazalnika
-- tabela območij ali občin
-- najboljši in najslabši kazalniki po posameznih skupinah
-- AI komentar in priporočila za izbrano območje
+- `Turistične regije`
+- `Vodilne destinacije`
+- `Makrodestinacije`
+- `Perspektivne destinacije`
 
-### Skupine kazalnikov
+## Skupine Kazalnikov
 
-Top/bottom analiza je ločena po skupinah:
+Kazalniki so razporejeni v skupine:
 
 - `Družbeni kazalniki`
 - `Okoljski kazalniki`
 - `Ekonomski nastanitveni in tržni turistični kazalniki`
 - `Ekonomsko poslovni kazalniki turistične dejavnosti`
 
-Vsaka skupina ima svojo ločeno razvrstitev.
+Izbira skupine vpliva na sezname kazalnikov, top/bottom analizo in prikaz v
+posameznih tabelah.
 
-## Kako deluje top/bottom analiza
+## Kako Brati Primerjave
 
-Aplikacija ne primerja vseh kazalnikov na enak način.
+Slovenija je osnovna primerjalna referenca.
 
-### Kumulativni kazalniki
+Pri seštevnih kazalnikih, kot so prenočitve, prihodi, kapacitete ali število
+obratov, aplikacija ne primerja samo absolutnih vrednosti. Upošteva tudi ustrezno
+primerjalno osnovo, na primer ležišča, prebivalstvo ali število obratov.
 
-Pri seštevnih kazalnikih, kot so:
+Pri deležih, indeksih in povprečjih aplikacija prikazuje neposreden odmik od
+slovenske vrednosti.
 
-- prenočitve
-- prihodi turistov
-- kapacitete
-- število obratov
+Pri nekaterih kazalnikih je nižja vrednost boljša. To je upoštevano v top/bottom
+analizi.
 
-se regija ne primerja samo po absolutni velikosti. Namesto tega se primerja:
+## Top/Bottom Analiza
 
-- delež regije v Sloveniji pri izbranem kazalniku
-- proti ustrezni referenčni osnovi
+Top/bottom analiza pokaže najmočnejše in najšibkejše kazalnike izbranega območja.
 
-Primer:
+Pomembno:
 
-- prenočitve se primerjajo glede na delež stalnih ležišč
-- kampi se primerjajo glede na delež vseh nastanitvenih obratov
-- skupne kapacitete se primerjajo glede na delež prebivalstva
+- analiza je ločena po skupinah kazalnikov
+- nekateri kazalniki so namenoma izločeni
+- velikost območja ne sme sama po sebi določiti rezultata
+- pri razvrstitvi se upošteva tudi razpon vrednosti med primerljivimi območji
 
-Tako velikost regije ne izkrivlja rezultatov.
+## AI Komentar
 
-### Ostali kazalniki
+AI komentar povzame ključne ugotovitve iz top/bottom analize in podatkov o trgih.
 
-Pri kazalnikih, ki niso seštevni, se uporablja neposredni odmik od vrednosti Slovenije.
+Če AI ni na voljo, aplikacija prikaže rezervni komentar. Razlog je lahko:
 
-To velja na primer za:
+- manjkajoč API ključ
+- težava z internetno povezavo
+- začasna napaka pri AI storitvi
+- omejitev kvote
 
-- deleže
-- povprečja
-- indekse
-- različne izračunane stopnje
+Če je nastavljen SQL cache, se že ustvarjen komentar pri enakih vhodnih podatkih
+ponovno uporabi.
 
-### Končna razvrstitev
+## Zavihek Turistični Promet In Sezonskost Po Trgih
 
-Končna top/bottom razvrstitev upošteva tudi to, kako zelo kazalnik odstopa glede na običajen razpon med primerljivimi območji iste ravni.
+V tem zavihku lahko analizirate:
 
-To pomeni:
+- strukturo prenočitev po trgih
+- rast prenočitev po trgih
+- sezonskost prenočitev
+- sezonskost prihodov
+- PDB po trgih
 
-- kazalniki različnih vrst so primerjani bolj pošteno
-- en sam kazalnik ne prevlada samo zato, ker ima večjo številčno skalo
+Običajen potek:
 
-## Zavihek `Struktura prenočitev po trgih`
+1. izberite pogled območij
+2. izberite območje
+3. izberite leto
+4. preglejte grafe in tabele
 
-V tem zavihku lahko:
+Če za izbrani pogled ali leto ni podatkov, aplikacija prikaže opozorilo.
 
-- izberete leto
-- izberete pogled območij
-- izberete območje
-- pregledate strukturo prenočitev po trgih
+## Nalaganje Lastnih Datotek
 
-Prikazana sta:
+V stranski vrstici lahko naložite:
 
-- tortni prikaz
-- tabela deležev po trgih
+- Excel z indikatorji
+- GeoJSON občin
 
-## Kako uporabljati aplikacijo
+To je začasni prepis privzetih podatkov za trenutno sejo. Ne spremeni podatkov v
+podatkovni bazi in ne spremeni datotek na strežniku.
 
-### Za splošno primerjavo območij
+## Navodila Za Skrbnika Podatkov
 
-1. V zavihku `Kazalniki` izberite `Pogled`.
-2. Kot območje izberite `Vsa območja`.
-3. Izberite skupino kazalnikov.
-4. Izberite kazalnik za zemljevid.
-5. Preglejte zemljevid in tabelo območij.
+Za redno posodabljanje podatkov je priporočeno, da Excel ostane urejevalni vir,
+podatkovna baza pa produkcijski vir za aplikacijo.
 
-### Za analizo posameznega območja
+Priporočen potek:
 
-1. Izberite želeno območje.
-2. Izberite skupino kazalnikov.
-3. Izberite glavni kazalnik za zemljevid.
-4. Preglejte KPI prikaz, zemljevid in tabelo občin.
-5. Preberite top/bottom analizo po skupinah.
-6. Na dnu preberite `AI komentar in priporočila za območje`.
+```text
+uredite Excel -> zaženite uvoz -> preverite aplikacijo -> objavite/uporabite
+```
 
-## AI komentar
+Uvoz podatkov:
 
-AI komentar temelji na vseh top/bottom rezultatih po skupinah kazalnikov skupaj.
+```bash
+python scripts/import_excel_to_db.py
+```
 
-To pomeni, da komentar upošteva:
+Ta ukaz prebere Excel datoteke iz mape `data/`, jih uvozi v PostgreSQL/Supabase in
+preveri, ali se vsebina v bazi ujema s prebranimi Excel podatki.
 
-- družbene kazalnike
-- okoljske kazalnike
-- nastanitvene in tržne kazalnike
-- poslovne kazalnike turistične dejavnosti
+### Dodajanje Ali Odstranjevanje Kazalnika
 
-Če AI klic ni na voljo, aplikacija prikaže rezervni komentar. Če je v projektu nastavljen podatkovni cache, se ob enakih vhodnih podatkih že ustvarjen AI komentar ponovno uporabi.
+1. Uredite `data/Skupna tabela občine.xlsx`, list `Skupna Tabela`.
+2. Enak naziv kazalnika dodajte ali odstranite v `data/mapping.xlsx`.
+3. Če kazalnik potrebuje posebno agregacijo, uredite `AGG_RULES` v kodi.
+4. Zaženite uvoz v bazo.
+5. Odprite aplikacijo in preverite prikaz.
 
-## Nalaganje lastnih datotek
+### Posodobitev Vrednosti
 
-V levi stranski vrstici lahko po želji naložite:
+1. Uredite vrednosti v Excelu.
+2. Ne spreminjajte osnovnih stolpcev `Občine` in `Turistična regija`.
+3. Zaženite uvoz v bazo.
+4. Preverite vsaj en zemljevid, eno tabelo in en izbran kazalnik.
 
-- svoj Excel z indikatorji
-- svoj GeoJSON
+### Posodobitev Tržnih In Sezonskih Podatkov
 
-Če tega ne storite, aplikacija uporabi privzete datoteke iz projekta.
+Uredite ustrezno datoteko:
 
-## Opombe pri interpretaciji
+- `Sezonskost prenocitev po mesecih in trgih - YEAR.xlsx`
+- `Sezonskost prihodov po mesecih in trgih - YEAR.xlsx`
+- `Sezonskost PDB po mesecih in trgih - YEAR.xlsx`
 
-- Pri nekaterih kazalnikih je nižja vrednost boljša od višje.
-- Nekateri kazalniki so iz top/bottom analize namenoma izločeni.
-- Slovenija se uporablja kot osnovna primerjalna referenca.
-- Pri določenih ekonomskih in poslovnih kazalnikih se lahko prikaže dodatno opozorilo glede interpretacije.
+Ohranite strukturo listov in glav:
 
-## Najpogostejše težave
+- listi za ravni območij
+- prva glava za trge
+- druga glava za mesece
 
-### Ne morem vstopiti v aplikacijo
+Nato zaženite uvoz v bazo.
 
-Preverite, ali je geslo pravilno.
+### Posodobitev Zemljevida
 
-### Ne vidim zemljevida
+1. Posodobite `data/si.json` ali `data/si_display.json`.
+2. Preverite, ali se imena občin ujemajo s podatki.
+3. Po potrebi ponovno zaženite aplikacijo.
 
-Možno je, da manjka GeoJSON ali pa se imena občin ne ujemajo dovolj natančno z vhodnimi podatki.
+## Najpogostejše Težave
 
-### AI komentar se ne prikaže
+### Ne Morem Vstopiti
 
-Če AI ni na voljo, aplikacija praviloma prikaže rezervni komentar. Razlog je lahko manjkajoč API ključ, izčrpana kvota ali težava pri klicu.
+Preverite, ali uporabljate pravilno geslo.
 
-### Kazalnik manjka
+### Zemljevid Se Ne Prikaže
 
-Kazalnik morda:
+Možni razlogi:
 
-- ni v izbrani skupini
-- ni pravilno zapisan v vhodnih podatkih
-- je namenoma izločen iz top/bottom analize
+- manjka GeoJSON
+- imena občin v GeoJSON-u se ne ujemajo s podatki
+- težava pri pripravi geometrije
+
+### Kazalnik Manjka
+
+Preverite:
+
+- ali je stolpec v Excelu
+- ali je enak naziv v `mapping.xlsx`
+- ali je kazalnik v izbrani skupini
+- ali je kazalnik namenoma izločen iz top/bottom analize
+
+### Podatki Se Po Ureditvi Excela Niso Spremenili
+
+Če aplikacija uporablja podatkovno bazo, samo urejanje Excela ni dovolj. Po urejanju
+je treba zagnati:
+
+```bash
+python scripts/import_excel_to_db.py
+```
+
+### AI Komentar Se Ne Prikaže
+
+Če AI ni na voljo, aplikacija prikaže rezervni komentar. Če se ne prikaže nič,
+preverite nastavitve API ključa, povezavo in strežniške dnevnike.

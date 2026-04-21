@@ -76,6 +76,13 @@ SLO_BOUNDS = [[41.00, 10.38], [49.88, 18.61]]
 AI_CACHE_CONNECTION_NAME_DEFAULT = "ai_cache_db"
 AI_CACHE_TABLE_NAME = "ai_commentary_cache"
 
+DATA_BACKEND_DEFAULT = "excel"
+DASHBOARD_DB_CONNECTION_NAME_DEFAULT = "ai_cache_db"
+DASHBOARD_DB_SCHEMA_VERSION = "2026-04-21-frame-v1"
+DASHBOARD_MAIN_FRAME_KEY = "main:skupna_tabela"
+DASHBOARD_MARKET_GROWTH_FRAME_KEY = "main:rast_prenocitev_po_trgih"
+DASHBOARD_MAPPING_FRAME_KEY = "mapping:indicator_groups"
+
 MARKET_PREFIX = "Delež vseh prenočitev - "
 MARKET_COLOR_MAP = {
     "Domači trg": "#1f77b4",

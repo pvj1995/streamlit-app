@@ -20,6 +20,14 @@ from tourism_dashboard.config import (
     VIEW_CANDIDATES,
     YEAR_NOTE_TEXT,
 )
+from tourism_dashboard.database import (
+    database_has_dashboard_frames,
+    get_dashboard_connection_name,
+    is_database_backend_enabled,
+    load_dashboard_data_signature,
+    load_main_dataframe_from_db,
+    load_market_growth_dataframe_from_db,
+)
 from tourism_dashboard.helpers import (
     build_numeric_dataframe,
     find_col,
@@ -84,6 +92,40 @@ def load_source_dataframes(
     return signature, main_df, growth_df
 
 
+def is_configured_database_backend_ready() -> bool:
+    return (
+        is_database_backend_enabled()
+        and database_has_dashboard_frames(get_dashboard_connection_name())
+    )
+
+
+def load_configured_source_dataframes(
+    uploaded_file: Any,
+    default_path: Path | None,
+) -> tuple[str | None, pd.DataFrame | None, pd.DataFrame | None]:
+    database_backend_requested = is_database_backend_enabled()
+    database_connection_name = get_dashboard_connection_name()
+    database_backend_ready = (
+        database_backend_requested
+        and database_has_dashboard_frames(database_connection_name)
+    )
+
+    if uploaded_file is None and database_backend_ready:
+        return (
+            load_dashboard_data_signature(database_connection_name),
+            load_main_dataframe_from_db(),
+            load_market_growth_dataframe_from_db(),
+        )
+
+    if uploaded_file is None and database_backend_requested and not database_backend_ready:
+        st.warning(
+            "Podatkovna baza je nastavljena, vendar uvoženih tabel nisem našel. "
+            "Uporabljam lokalni Excel."
+        )
+
+    return load_source_dataframes(uploaded_file, default_path)
+
+
 def build_data_bundle(
     raw_df: pd.DataFrame,
     raw_market_growth_df: pd.DataFrame | None,
@@ -117,7 +159,7 @@ def build_data_bundle(
             views.append((title, column))
 
     if not views:
-        st.error("V Excelu ne najdem stolpcev za poglede območij.")
+        st.error("V podatkih ne najdem stolpcev za poglede območij.")
         st.stop()
 
     market_cols = [column for column in df.columns if str(column).startswith(MARKET_PREFIX)]
@@ -165,22 +207,27 @@ with st.sidebar:
 
 
 default_path = find_excel_file()
-if xlsx_file is None and (default_path is None or not default_path.exists()):
+database_backend_ready = is_configured_database_backend_ready()
+if xlsx_file is None and not database_backend_ready and (default_path is None or not default_path.exists()):
     st.error(
         f"Ne najdem privzetega Excela: {DATA_XLSX_FILENAME}. "
         "Naloži Excel v stranski vrstici."
     )
     st.stop()
 
-source_signature, raw_df, raw_market_growth_df = load_source_dataframes(xlsx_file, default_path)
+source_signature, raw_df, raw_market_growth_df = load_configured_source_dataframes(
+    xlsx_file,
+    default_path,
+)
+
 if raw_df is None or source_signature is None:
-    st.error("Excela ni bilo mogoče naložiti.")
+    st.error("Podatkov ni bilo mogoče naložiti.")
     st.stop()
 
 
 required_columns = {"Občine", "Turistična regija"}
 if not required_columns.issubset(raw_df.columns):
-    st.error("V Excelu ne najdem stolpcev 'Občine' in/ali 'Turistična regija'.")
+    st.error("V podatkih ne najdem stolpcev 'Občine' in/ali 'Turistična regija'.")
     st.stop()
 
 data_bundle_key = "_dashboard_data_bundle"

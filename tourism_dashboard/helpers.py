@@ -307,6 +307,17 @@ def load_market_arrivals_seasonality_workbook(path_str: str) -> dict[str, pd.Dat
 
 
 def load_market_overnight_seasonality_data() -> dict[int, dict[str, pd.DataFrame]]:
+    from tourism_dashboard.database import (
+        MARKET_METRIC_OVERNIGHTS,
+        database_has_dashboard_frames,
+        get_dashboard_connection_name,
+        is_database_backend_enabled,
+        load_market_monthly_data_from_db,
+    )
+
+    if is_database_backend_enabled() and database_has_dashboard_frames(get_dashboard_connection_name()):
+        return load_market_monthly_data_from_db(MARKET_METRIC_OVERNIGHTS)
+
     loaded: dict[int, dict[str, pd.DataFrame]] = {}
     for year, path in find_market_overnight_seasonality_files().items():
         workbook_data = load_market_overnight_seasonality_workbook(str(path))
@@ -316,6 +327,17 @@ def load_market_overnight_seasonality_data() -> dict[int, dict[str, pd.DataFrame
 
 
 def load_market_arrivals_seasonality_data() -> dict[int, dict[str, pd.DataFrame]]:
+    from tourism_dashboard.database import (
+        MARKET_METRIC_ARRIVALS,
+        database_has_dashboard_frames,
+        get_dashboard_connection_name,
+        is_database_backend_enabled,
+        load_market_monthly_data_from_db,
+    )
+
+    if is_database_backend_enabled() and database_has_dashboard_frames(get_dashboard_connection_name()):
+        return load_market_monthly_data_from_db(MARKET_METRIC_ARRIVALS)
+
     loaded: dict[int, dict[str, pd.DataFrame]] = {}
     for year, path in find_market_arrivals_seasonality_files().items():
         workbook_data = load_market_arrivals_seasonality_workbook(str(path))
@@ -386,6 +408,16 @@ def load_market_pdb_workbook(path_str: str) -> dict[str, dict[str, pd.DataFrame]
 
 
 def load_market_pdb_data() -> dict[int, dict[str, dict[str, pd.DataFrame]]]:
+    from tourism_dashboard.database import (
+        database_has_dashboard_frames,
+        get_dashboard_connection_name,
+        is_database_backend_enabled,
+        load_market_pdb_data_from_db,
+    )
+
+    if is_database_backend_enabled() and database_has_dashboard_frames(get_dashboard_connection_name()):
+        return load_market_pdb_data_from_db()
+
     loaded: dict[int, dict[str, dict[str, pd.DataFrame]]] = {}
     for year, path in find_market_pdb_files().items():
         workbook_data = load_market_pdb_workbook(str(path))
@@ -406,6 +438,16 @@ def try_load_geojson(path: Path):
 
 @st.cache_data(show_spinner=False)
 def load_indicator_groups(path: Path) -> dict[str, list[str]]:
+    from tourism_dashboard.database import (
+        database_has_dashboard_frames,
+        get_dashboard_connection_name,
+        is_database_backend_enabled,
+        load_indicator_groups_from_db,
+    )
+
+    if is_database_backend_enabled() and database_has_dashboard_frames(get_dashboard_connection_name()):
+        return load_indicator_groups_from_db()
+
     if not path.exists():
         return {}
     try:

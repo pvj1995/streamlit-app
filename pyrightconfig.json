@@ -1,7 +1,8 @@
 {
   "include": [
     "streamlit_app_sandbox.py",
-    "tourism_dashboard"
+    "tourism_dashboard",
+    "scripts"
   ],
   "typeCheckingMode": "basic",
   "extraPaths": [

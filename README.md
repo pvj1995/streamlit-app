@@ -1,240 +1,327 @@
 # Tourism Dashboard for Slovenian Destinations
 
-Streamlit application for exploring tourism indicators across Slovenian municipalities, destinations, tourism regions, and macro destinations.
+Streamlit application for exploring tourism indicators across Slovenian municipalities,
+destinations, tourism regions, macro destinations, and the national level.
 
-The app combines:
+The app provides:
 
-- map-based indicator exploration
-- comparison tables for areas and municipalities
+- indicator maps and comparison tables
+- territorial aggregation from municipality-level data
 - grouped top/bottom diagnostics
-- AI-generated commentary and recommendations
-- source-market structure analysis
+- source-market structure and seasonality analysis
+- optional AI commentary and recommendations
+- optional PostgreSQL/Supabase-backed runtime data
 
-Short Slovenian end-user guide: [README_uporabnik.md](./README_uporabnik.md)
+Short Slovenian end-user guide: [README_uporabnik.md](./README_uporabnik.md).
 
-## Overview
+## Current Architecture
 
-The project is organized as a modular Streamlit app:
+The app is still pandas-based internally. That is intentional: the analytics and UI are built
+around `DataFrame`s, while the data source can now be either Excel files or PostgreSQL/Supabase.
 
-- [`streamlit_app_sandbox.py`](./streamlit_app_sandbox.py) is the entrypoint
-- [`tourism_dashboard/`](./tourism_dashboard) contains the app logic
-- [`data/`](./data) contains the default Excel, mapping workbook, and GeoJSON
-- [`assets/`](./assets) contains buttons, banners, icons, logos, and title images
+Recommended production flow:
 
-The app is password-protected, supports optional local file uploads, and can persist AI commentary in a SQL database through a Streamlit connection.
+```text
+Excel source files -> import script -> PostgreSQL/Supabase -> Streamlit app
+```
 
-## Current features
+For development and emergency overrides, the app can still read the Excel files directly.
 
-- Password gate via `APP_PASSWORD`
-- Default loading from `data/`
-- Optional upload override for Excel and GeoJSON
-- Territorial views:
-  - `Turistične regije`
-  - `Vodilne destinacije`
-  - `Makrodestinacije`
-  - `Regijske destinacije`
-  - `Perspektivne destinacije`
-- Image-based indicator-group selector
-- Area-wide and municipality-level maps
-- Region summary KPIs and optional dashboard indicators
-- Top/bottom analysis per indicator group
-- AI commentary built from all group-level top/bottom results
-- Source-market structure tab for 2024 and 2025
-- Persistent AI response cache through SQL
-- Fallback rule-based commentary if the OpenAI call is unavailable
-
-## Project structure
+## Project Structure
 
 ```text
 streamlit app/
-├── assets/
-│   ├── banners/
-│   ├── buttons/
-│   ├── icons/
-│   ├── logos/
-│   └── title/
-│       └── slides/
-├── data/
-│   ├── Skupna tabela občine.xlsx
-│   ├── mapping.xlsx
-│   └── si.json
+├── assets/                     # images, logos, title slides, button images
+├── data/                       # source Excel files and GeoJSON files
+├── db/
+│   └── dashboard_frames.sql    # PostgreSQL schema for imported dashboard data
+├── scripts/
+│   └── import_excel_to_db.py   # imports data/*.xlsx into PostgreSQL/Supabase
 ├── tourism_dashboard/
-│   ├── ai.py
-│   ├── analytics.py
-│   ├── assets.py
-│   ├── auth.py
-│   ├── config.py
-│   ├── formatting.py
-│   ├── helpers.py
-│   ├── maps.py
-│   ├── models.py
-│   ├── paths.py
-│   └── ui.py
-├── .streamlit/
-│   └── secrets.toml
+│   ├── ai.py                   # AI prompt, OpenAI call, AI cache
+│   ├── analytics.py            # aggregation, ranking, market calculations
+│   ├── assets.py               # image/header rendering helpers
+│   ├── auth.py                 # password gate
+│   ├── config.py               # constants, labels, aggregation rules
+│   ├── database.py             # database-backed DataFrame loaders
+│   ├── formatting.py           # number and table formatting
+│   ├── helpers.py              # Excel loading, parsing, source selection
+│   ├── maps.py                 # GeoJSON and folium rendering
+│   ├── models.py               # shared dataclasses
+│   ├── paths.py                # project paths
+│   └── ui.py                   # Streamlit views
+├── streamlit_app_sandbox.py    # Streamlit entrypoint
 ├── requirements.txt
-├── streamlit_app_sandbox.py
+├── pyrightconfig.json
 ├── README.md
 └── README_uporabnik.md
 ```
 
-## Runtime flow
+## Data Sources
 
-`streamlit_app_sandbox.py` currently does the following:
+Required source files:
 
-1. sets Streamlit page config
-2. requires a password through [`tourism_dashboard/auth.py`](./tourism_dashboard/auth.py)
-3. renders the page header
-4. loads the default or uploaded Excel
-5. prepares a cached numeric dataframe for the current dataset
-6. loads the GeoJSON and indicator-group mapping
-7. builds a `DashboardContext`
-8. renders two main tabs:
-   - `Kazalniki`
-   - `Struktura prenočitev po trgih`
+- `data/Skupna tabela občine.xlsx`
+  - sheet `Skupna Tabela`
+  - sheet `Rast prenočitev po trgih`
+- `data/mapping.xlsx`
+- `data/si.json`
+- `data/si_display.json`
 
-The heaviest dataset preprocessing now happens once per loaded Excel source and is reused across reruns through cached helpers and session state.
+Market/seasonality source files:
 
-## Local setup
+- `data/Sezonskost prenocitev po mesecih in trgih - 2024.xlsx`
+- `data/Sezonskost prenocitev po mesecih in trgih - 2025.xlsx`
+- `data/Sezonskost prihodov po mesecih in trgih - 2024.xlsx`
+- `data/Sezonskost prihodov po mesecih in trgih - 2025.xlsx`
+- `data/Sezonskost PDB po mesecih in trgih - 2024.xlsx`
+- `data/Sezonskost PDB po mesecih in trgih - 2025.xlsx`
 
-### 1. Create a virtual environment
+The GeoJSON files are still loaded from disk. They are not imported into the database.
+
+## Data Backend Modes
+
+### Excel Mode
+
+Excel mode is the default fallback.
+
+```toml
+DATA_BACKEND = "excel"
+```
+
+In this mode the app reads files from `data/` directly. This is useful for local development,
+debugging, or when no database is configured.
+
+### Database Mode
+
+Database mode is recommended for private deployment.
+
+```toml
+DATA_BACKEND = "database"
+DASHBOARD_DB_CONNECTION_NAME = "ai_cache_db"
+
+[connections.ai_cache_db]
+url = "postgresql://USER:PASSWORD@HOST:5432/postgres"
+```
+
+In this mode the app reads imported data from PostgreSQL/Supabase through Streamlit SQL
+connections. The Excel uploader in the sidebar remains available as a temporary override.
+
+## Database Schema
+
+The importer creates and updates these tables:
+
+- `dashboard_frames`
+- `dashboard_frame_columns`
+- `dashboard_frame_cells`
+
+This schema stores each parsed Excel sheet as a typed frame. It avoids creating SQL columns from
+long Slovenian indicator names, and it lets the app reconstruct the same `DataFrame`s it used when
+reading Excel directly.
+
+Schema file: [db/dashboard_frames.sql](./db/dashboard_frames.sql).
+
+## Setup
+
+### 1. Create a Virtual Environment
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Install dependencies
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Create local Streamlit secrets
+### 3. Configure Secrets
 
-Create:
+Create `.streamlit/secrets.toml`.
 
-```text
-.streamlit/secrets.toml
-```
-
-Minimum example:
+Minimum local example:
 
 ```toml
 APP_PASSWORD = "your-password"
 ```
 
-Example with AI and SQL cache:
+Recommended private-server/Supabase example:
 
 ```toml
 APP_PASSWORD = "your-password"
-OPENAI_API_KEY = "sk-..."
-OPENAI_MODEL = "gpt-5.4"
+DATA_BACKEND = "database"
+DASHBOARD_DB_CONNECTION_NAME = "ai_cache_db"
 AI_CACHE_CONNECTION_NAME = "ai_cache_db"
 
 [connections.ai_cache_db]
 url = "postgresql://USER:PASSWORD@HOST:5432/postgres"
 ```
 
-Notes:
+Optional AI settings:
 
-- `APP_PASSWORD` is required
-- `OPENAI_API_KEY` is optional
-- `OPENAI_MODEL` defaults to `gpt-5.4`
-- `AI_CACHE_CONNECTION_NAME` defaults to `ai_cache_db`
-- if the SQL connection is missing, the app still works, but commentary cache persistence is skipped
+```toml
+OPENAI_API_KEY = "sk-..."
+OPENAI_MODEL = "gpt-5.4"
+```
 
-### 4. Run
+Secrets:
+
+- `APP_PASSWORD`: required
+- `DATA_BACKEND`: `excel` or `database`
+- `DASHBOARD_DB_CONNECTION_NAME`: Streamlit SQL connection used for dashboard data
+- `AI_CACHE_CONNECTION_NAME`: Streamlit SQL connection used for AI cache
+- `OPENAI_API_KEY`: optional
+- `OPENAI_MODEL`: optional, defaults in code if omitted
+
+## Importing Data Into PostgreSQL/Supabase
+
+Run:
+
+```bash
+python scripts/import_excel_to_db.py
+```
+
+The importer:
+
+1. reads all supported Excel files from `data/`
+2. parses them using the same helper functions as the app
+3. creates the database schema if missing
+4. replaces current imported frames
+5. prunes stale frames for the current schema version
+6. verifies database contents against the parsed Excel frames
+
+If the verification fails, treat the import as failed and do not deploy that data version.
+
+## Updating Data
+
+Best current workflow:
+
+```text
+edit Excel files -> run importer -> run smoke check -> deploy/restart app
+```
+
+Do not manually edit `dashboard_frame_cells` in Supabase except for an emergency. The database is
+optimized as a runtime mirror of the Excel source files, not as a friendly manual editing interface.
+
+### Add or Remove an Indicator
+
+1. Edit `data/Skupna tabela občine.xlsx`, sheet `Skupna Tabela`.
+2. Add or remove the exact indicator label in `data/mapping.xlsx`.
+3. If needed, update `AGG_RULES` in [tourism_dashboard/config.py](./tourism_dashboard/config.py).
+4. If lower values are better, update `LOWER_IS_BETTER_INDICATORS`.
+5. If the indicator needs special formatting or warnings, update the matching config lists.
+6. Run:
+
+```bash
+python scripts/import_excel_to_db.py
+```
+
+### Update Municipality or Area Values
+
+1. Edit values in `data/Skupna tabela občine.xlsx`.
+2. Keep the `Občine` and `Turistična regija` columns intact.
+3. Run the importer.
+
+### Update Market Growth
+
+1. Edit `data/Skupna tabela občine.xlsx`, sheet `Rast prenočitev po trgih`.
+2. Preserve column naming like `Število nočitev 2025 - Domači trg`.
+3. Run the importer.
+
+### Update Monthly Market Files
+
+1. Edit the relevant `Sezonskost ... - YEAR.xlsx` file.
+2. Preserve the two-row market/month header structure.
+3. Preserve expected sheet levels such as `Občine`, `Turistična regija`, `Vodilne destinacije`,
+   `Perspektivne destinacije`, and `Makro destinacije`.
+4. Run the importer.
+
+### Update GeoJSON
+
+1. Replace `data/si.json` or `data/si_display.json`.
+2. Make sure municipality names match the app data after normalization.
+3. Restart the app if the previous GeoJSON was cached in the Streamlit session.
+
+## Running The App
 
 ```bash
 streamlit run streamlit_app_sandbox.py
 ```
 
-## Deployment
+On first load, sign in with `APP_PASSWORD`.
 
-The app is designed for both local use and Streamlit Community Cloud.
+## Private Server Deployment
 
-For Streamlit Community Cloud:
-
-1. push the repository to GitHub
-2. point Streamlit to `streamlit_app_sandbox.py`
-3. add the same secrets in the Streamlit app settings
-4. keep `data/` and `assets/` committed
-
-## Default data and assets
-
-### Required data files
-
-- [`data/Skupna tabela občine.xlsx`](./data/Skupna%20tabela%20obc%CC%8Cine.xlsx)
-- [`data/mapping.xlsx`](./data/mapping.xlsx)
-- [`data/si.json`](./data/si.json)
-
-### Main asset folders
-
-- [`assets/buttons/`](./assets/buttons)
-- [`assets/banners/`](./assets/banners)
-- [`assets/icons/`](./assets/icons)
-- [`assets/logos/`](./assets/logos)
-- [`assets/title/`](./assets/title)
-- [`assets/title/slides/`](./assets/title/slides)
-
-The app will still fall back to some root-level lookup patterns for compatibility, but the current intended layout is `data/` plus `assets/`.
-
-## Excel requirements
-
-The Excel workbook must contain at least:
-
-- `Občine`
-- `Turistična regija`
-
-Additional territorial columns are optional but expected if you want the corresponding views to appear.
-
-The first row is treated as the authoritative Slovenia row for national baselines. This is important for:
-
-- top/bottom comparison
-- KPI comparison to Slovenia
-- AI commentary inputs
-
-## Mapping workbook requirements
-
-[`data/mapping.xlsx`](./data/mapping.xlsx) is read column-by-column:
-
-- each column name becomes a group name
-- each non-empty cell in that column becomes an indicator in that group
-
-Expected shape:
+Typical deployment shape:
 
 ```text
-| Družbeni kazalniki | Okoljski kazalniki | ... |
-| indicator A        | indicator X        | ... |
-| indicator B        | indicator Y        | ... |
+Nginx or Caddy -> Streamlit -> PostgreSQL/Supabase
 ```
 
-## GeoJSON requirements
+Recommended server steps:
 
-The default GeoJSON should contain municipality polygons.
+1. Clone or pull the repository.
+2. Create/update `.streamlit/secrets.toml`.
+3. Install dependencies in `.venv`.
+4. Run `python scripts/import_excel_to_db.py` after every data update.
+5. Start Streamlit with a process manager such as `systemd`, `supervisor`, or Docker.
+6. Put Nginx/Caddy in front of Streamlit for TLS and domain routing.
+7. Back up the PostgreSQL/Supabase database and keep source Excel files versioned.
 
-The app tries to auto-detect a municipality-name property from:
+Example Streamlit command:
 
-- `name`
-- `NAME`
-- `Občina`
-- `OBČINA`
+```bash
+streamlit run streamlit_app_sandbox.py --server.address 127.0.0.1 --server.port 8501
+```
 
-If none match, the first available property key is used.
+## Streamlit Community Cloud
 
-## Aggregation logic
+The app can still run on Streamlit Community Cloud.
 
-Aggregation rules are defined in [`tourism_dashboard/config.py`](./tourism_dashboard/config.py) under `AGG_RULES`.
+1. Push the repository to GitHub.
+2. Set the entrypoint to `streamlit_app_sandbox.py`.
+3. Add secrets in the Streamlit app settings.
+4. Use `DATA_BACKEND = "database"` if using Supabase.
+5. Keep `assets/`, `data/`, and the app code committed if Excel fallback is desired.
+
+## Runtime Flow
+
+At startup, `streamlit_app_sandbox.py`:
+
+1. configures the Streamlit page
+2. requires a password through `tourism_dashboard/auth.py`
+3. renders the page header
+4. chooses database or Excel data source
+5. builds/caches the numeric dashboard bundle
+6. loads GeoJSON and indicator groups
+7. creates a `DashboardContext`
+8. renders `Kazalniki` and `Turistični promet in sezonskost po trgih`
+
+## Key Configuration
+
+Most behavior is controlled from [tourism_dashboard/config.py](./tourism_dashboard/config.py):
+
+- text labels and page copy
+- file names
+- database backend constants
+- market labels and colors
+- territorial view candidates
+- aggregation rules
+- top/bottom limits
+- lower-is-better indicators
+- formatting lists
+- warning lists
+
+## Aggregation Model
+
+Aggregation rules are defined in `AGG_RULES`.
 
 Supported modes:
 
-- `sum`
-  For additive indicators such as totals, counts, capacities, overnight stays, establishments, and sector totals.
-- `mean`
-  For genuine simple averages.
-- `wmean`
-  For weighted averages where municipalities should contribute proportionally to a denominator or scale.
+- `sum`: additive indicators such as totals, capacities, visits, nights, and counts
+- `mean`: simple averages
+- `wmean`: weighted averages
 
 Example:
 
@@ -242,332 +329,108 @@ Example:
 "Delež tujih prenočitev - 2025": ("wmean", "Prenočitve turistov SKUPAJ - 2025")
 ```
 
-Meaning:
+That means municipality percentages are weighted by total overnight stays instead of being summed.
 
-- municipality percentages are not summed
-- the region value is a weighted average
-- the weight is total overnight stays
+## Top/Bottom Methodology
 
-## Top/bottom methodology
+Top/bottom analysis is grouped by indicator category. It does not simply rank raw values.
 
-The current top/bottom section is intentionally not a naive raw-value ranking.
+For `sum` indicators, the app compares the region's share of the indicator against a relevant
+benchmark share. For non-`sum` indicators, it compares the direct gap against Slovenia. The final
+ranking score is scaled by same-level peer spread so mixed indicator types can be compared more
+fairly.
 
-### Group-specific ranking
+Important configuration:
 
-Each indicator group is ranked separately, using limits from `TOP_BOTTOM_GROUP_LIMITS`:
+- `TOP_BOTTOM_GROUP_LIMITS`
+- `TOP_BOTTOM_EXCLUDED_INDICATORS`
+- `LOWER_IS_BETTER_INDICATORS`
+- `get_sum_comparison_base()` in [tourism_dashboard/analytics.py](./tourism_dashboard/analytics.py)
 
-- `Družbeni kazalniki`: top 4 / bottom 4
-- `Okoljski kazalniki`: top 3 / bottom 3
-- `Ekonomski nastanitveni in tržni turistični kazalniki`: top 5 / bottom 5
-- `Ekonomsko poslovni kazalniki turistične dejavnosti`: top 5 / bottom 5
+## AI Commentary
 
-### Excluded indicators
+AI commentary is optional.
 
-Indicators listed in `TOP_BOTTOM_EXCLUDED_INDICATORS` are excluded from the top/bottom analysis.
-
-### Lower-is-better handling
-
-Indicators listed in `LOWER_IS_BETTER_INDICATORS` are sign-adjusted so that:
-
-- positive aligned score means stronger / more favorable
-- negative aligned score means weaker / less favorable
-
-### Slovenia baseline
-
-The comparison baseline always comes from the dedicated Slovenia row in the Excel, not from re-aggregating municipalities.
-
-### `sum` indicators
-
-`sum` indicators do not compare raw region totals directly to raw Slovenia totals.
-
-Instead, the app compares:
-
-- the region share of the indicator within Slovenia
-- against the region share of a benchmark base chosen by `get_sum_comparison_base()`
-
-The displayed formula is:
-
-```text
-indicator_share = region_value / slovenia_value
-benchmark_share = base_reg / base_slo
-display_delta = (indicator_share - benchmark_share) * 100
-```
-
-The result is shown in `o.t.` (`odstotne točke`).
-
-Current routing logic in [`tourism_dashboard/analytics.py`](./tourism_dashboard/analytics.py):
-
-- tourism-flow totals such as `prenočitve` and `prihodi turistov`
-  compare to matched-year permanent bed capacity
-- total accommodation supply such as `Nastanitvene kapacitete - ...` and `Število vseh nastanitvenih obratov 2025`
-  compare to matched-year population
-- accommodation subtype establishment counts such as `Število hotelov ipd. NO 2025` or `Število kampov 2025`
-  compare to total accommodation establishments
-- room/unit subtype totals compare to total room/unit stock
-- bed subtype totals compare to total permanent-bed stock
-
-This is meant to reflect structural tourism strength more truthfully than comparing all totals to population.
-
-### Non-`sum` indicators
-
-Non-`sum` indicators now use a direct gap to Slovenia for display.
-
-- percent-like indicators are shown in `o.t.`
-- currency indicators are shown in `€`
-- other indicators use raw unit gap
-
-This avoids the old issue where very small Slovenian baselines could create misleadingly huge relative `%` deviations.
-
-### Final ranking score
-
-Displayed gaps are not used directly as the final mixed ranking scale.
-
-The app computes a separate internal score:
-
-```text
-ranking_score = aligned_display_gap / typical_peer_spread
-```
-
-The spread is estimated robustly from same-level peer areas using:
-
-- MAD-based scale first
-- IQR fallback
-- standard deviation fallback
-- median magnitude fallback
-
-This allows `sum` and non-`sum` indicators to coexist within the same group without one unit system dominating the ranking.
-
-## AI commentary
-
-AI commentary is built from all group-level top/bottom outputs together.
-
-Flow:
-
-1. [`build_top_bottom_group_sections()`](./tourism_dashboard/analytics.py) prepares grouped results
-2. [`render_region_top_bottom_and_ai()`](./tourism_dashboard/ui.py) builds a stable JSON payload
-3. the payload hash becomes the cache key
-4. the app first checks the SQL cache
-5. if missing, it calls the OpenAI Responses API
-6. if the AI call fails, it falls back to a local summary
-
-### SQL cache
-
-The default table name is:
-
-```text
-ai_commentary_cache
-```
-
-It is created automatically if the SQL connection is available.
-
-Main columns:
-
-- `cache_key`
-- `payload_hash`
-- `region`
-- `group_name`
-- `response_text`
-- `model`
-- `updated_at`
-
-### When cached commentary is reused
-
-The same cached response is reused when the hashed input payload is unchanged, meaning the selected area and all relevant grouped top/bottom inputs are the same.
-
-## Performance notes
-
-The current version includes several performance improvements:
-
-- Excel loading is cached separately for file-path and uploaded-byte sources
-- the numeric dataframe is built once per loaded dataset and reused across reruns
-- regional aggregation now groups once per territorial level instead of repeatedly refiltering the dataframe
-- generated folium map HTML is cached
-
-The main places that still have noticeable cost are:
-
-- first render after changing the Excel source
-- top/bottom calculation for a region, because it still computes a fairly broad reference aggregation set
-- first AI generation when no cache entry exists
-
-## Key modules
-
-- [`tourism_dashboard/auth.py`](./tourism_dashboard/auth.py)
-  Password gate based on `APP_PASSWORD`.
-- [`tourism_dashboard/helpers.py`](./tourism_dashboard/helpers.py)
-  Excel loading, cached load helpers, numeric parsing, column normalization, secret access.
-- [`tourism_dashboard/analytics.py`](./tourism_dashboard/analytics.py)
-  Aggregation rules, top/bottom logic, benchmark-base routing, and market-column discovery.
-- [`tourism_dashboard/ui.py`](./tourism_dashboard/ui.py)
-  Main Streamlit views for indicators, maps, grouped diagnostics, and market structure.
-- [`tourism_dashboard/maps.py`](./tourism_dashboard/maps.py)
-  GeoJSON transformation and folium rendering.
-- [`tourism_dashboard/assets.py`](./tourism_dashboard/assets.py)
-  Page header, banner rendering, group button assets, image helpers.
-- [`tourism_dashboard/ai.py`](./tourism_dashboard/ai.py)
-  Prompt assembly, OpenAI call, retry behavior, fallback commentary, SQL cache read/write.
-- [`tourism_dashboard/config.py`](./tourism_dashboard/config.py)
-  Constants, UI labels, aggregation rules, exclusions, flags, and visual configuration.
-
-## Key function reference
-
-This is a practical reference for the main maintenance points in the project.
-
-### Entrypoint
-
-`load_source_dataframe(uploaded_file, default_path)` in [`streamlit_app_sandbox.py`](./streamlit_app_sandbox.py)
-
-- `uploaded_file`
-  Streamlit uploader object or `None`
-- `default_path`
-  `Path | None`
-- returns
-  `(signature, dataframe)` pair used to decide whether cached prepared data can be reused
-
-### Helpers
-
-`load_excel_from_path(path_str: str) -> pd.DataFrame` in [`helpers.py`](./tourism_dashboard/helpers.py)
-
-- loads the Excel from disk
-- cached with `st.cache_data`
-
-`load_excel_from_bytes(raw_bytes: bytes) -> pd.DataFrame` in [`helpers.py`](./tourism_dashboard/helpers.py)
-
-- loads an uploaded Excel from in-memory bytes
-- cached with `st.cache_data`
-
-`build_numeric_dataframe(df: pd.DataFrame, numeric_columns: list[str]) -> pd.DataFrame` in [`helpers.py`](./tourism_dashboard/helpers.py)
-
-- converts configured value columns to numeric form
-- leaves metadata columns intact
-
-### Analytics
-
-`aggregate_indicator_with_rules(df, indicator, agg_rules, region_name)` in [`analytics.py`](./tourism_dashboard/analytics.py)
-
-- `df`
-  subset dataframe for the target area
-- `indicator`
-  exact indicator label
-- `agg_rules`
-  `AGG_RULES` mapping
-- `region_name`
-  area label, used for special derived indicators
-
-`get_sum_comparison_base(indicator: str) -> tuple[str, str]` in [`analytics.py`](./tourism_dashboard/analytics.py)
-
-- returns the benchmark indicator and a human-readable label
-- used only for `sum`-indicator comparison
-
-`compute_region_aggregates(numeric_df, regions, indicator_cols, agg_rules, group_col)` in [`analytics.py`](./tourism_dashboard/analytics.py)
-
-- builds an area-level aggregation table for a set of indicators
-- used by map views, KPI summaries, and top/bottom reference calculations
-
-`build_top_bottom_group_sections(reg_df, df_slo_total_num, grouped_filtered, agg_rules, region_name, reference_agg_df=None)` in [`analytics.py`](./tourism_dashboard/analytics.py)
-
-- returns the grouped top/bottom payload used both for UI tables and AI commentary
-
-### UI
-
-`render_view(view_title: str, group_col: str, ctx: DashboardContext)` in [`ui.py`](./tourism_dashboard/ui.py)
-
-- renders the main indicator tab for one territorial view
-
-`render_market_structure(view_title: str, group_col: str, ctx: DashboardContext)` in [`ui.py`](./tourism_dashboard/ui.py)
-
-- renders the source-market structure tab
-
-### AI
-
-`generate_region_ai_commentary(region_name: str, group_sections: list[dict[str, Any]])` in [`ai.py`](./tourism_dashboard/ai.py)
-
-- builds the current AI prompt
-- calls OpenAI if configured
-- falls back to rule-based commentary if unavailable
-
-## Maintenance workflows
-
-### Add a new indicator
-
-1. Add the column to the Excel workbook.
-2. Add the exact same label to the correct column in `data/mapping.xlsx`.
-3. Add the indicator to `AGG_RULES` in [`config.py`](./tourism_dashboard/config.py).
-4. If lower values are better, add it to `LOWER_IS_BETTER_INDICATORS`.
-5. If it should render with `€`, add it to `INDIKATORJI_Z_VALUTO`.
-6. If municipality tables should behave like an index rather than a share, add it to `INDIKATORJI_Z_INDEKSI`.
-7. If it needs the shared warning, add it to `INDIKATORJI_Z_OPOMBO`.
-8. If it should be excluded from top/bottom, add it to `TOP_BOTTOM_EXCLUDED_INDICATORS`.
-9. If it is a `sum` indicator and needs special benchmark routing, update `get_sum_comparison_base()`.
-
-### Add a new territorial view
-
-Add the desired human-readable title and candidate column names to `VIEW_CANDIDATES` in [`config.py`](./tourism_dashboard/config.py).
-
-### Change button or banner assets
-
-Main asset configuration is in [`config.py`](./tourism_dashboard/config.py):
-
-- `GROUP_BUTTON_IMAGE_FILES`
-- `AI_BANNER_FILENAME`
-- `AI_ICON_FILENAME`
-- `TITLE_FALLBACK_FILENAME`
-
-### Change the AI prompt
-
-Edit:
-
-- `system_prompt` in [`tourism_dashboard/ai.py`](./tourism_dashboard/ai.py#L273)
-- `user_prompt` in [`tourism_dashboard/ai.py`](./tourism_dashboard/ai.py#L277)
-
-The grouped top/bottom content that is injected into the prompt is assembled by:
-
-- [`grouped_rows_to_prompt_text()`](./tourism_dashboard/ai.py#L160)
-
-## Troubleshooting
-
-### The app stops immediately on startup
-
-Most likely:
-
-- `APP_PASSWORD` is missing in `.streamlit/secrets.toml`
-
-### The map does not render
-
-Check:
-
-- GeoJSON exists
-- municipality names match the Excel closely enough after normalization
-- `folium` and `geopandas` are installed
-
-### AI commentary never appears
-
-Possible causes:
-
-- `OPENAI_API_KEY` is missing
-- the model request failed
-- the SQL cache connection is misconfigured
-
-If AI is unavailable, the app should still display fallback commentary.
-
-### The IDE shows unresolved imports
-
-Make sure:
-
-- the project root is opened in VS Code
-- the selected interpreter is `.venv/bin/python`
-- the workspace uses the included `.vscode/settings.json` and `pyrightconfig.json`
+If `OPENAI_API_KEY` is configured, the app calls the OpenAI API. If the call fails or the key is
+missing, the app displays fallback commentary. If the SQL cache is available, generated commentary is
+stored in `ai_commentary_cache` and reused for unchanged input payloads.
 
 ## Verification
 
-Basic syntax check:
+Compile check:
 
 ```bash
-python3 -m py_compile streamlit_app_sandbox.py tourism_dashboard/*.py
+python -m py_compile streamlit_app_sandbox.py tourism_dashboard/*.py scripts/*.py
 ```
 
-For interactive verification, run the app and test:
+Database import and parity check:
 
-1. login
-2. one all-area map view
-3. one single-area top/bottom + AI view
-4. market-structure tab for both years
+```bash
+python scripts/import_excel_to_db.py
+```
+
+Manual smoke test:
+
+1. Start the app.
+2. Log in.
+3. Open `Kazalniki`.
+4. Test one `Vsa območja` view.
+5. Test one individual area view.
+6. Confirm the map renders.
+7. Confirm top/bottom tables render.
+8. Open the market tab.
+9. Test 2024 and 2025.
+10. Confirm AI fallback or AI commentary appears.
+
+## Troubleshooting
+
+### App Stops On Startup
+
+Check that `.streamlit/secrets.toml` contains `APP_PASSWORD`.
+
+### Database Data Is Not Used
+
+Check:
+
+- `DATA_BACKEND = "database"`
+- `DASHBOARD_DB_CONNECTION_NAME` matches a `[connections.<name>]` block
+- the connection URL is valid
+- `python scripts/import_excel_to_db.py` has completed successfully
+
+If database tables are missing, the app falls back to Excel and shows a warning.
+
+### Map Does Not Render
+
+Check:
+
+- `data/si_display.json` or `data/si.json` exists
+- GeoJSON municipality names match the Excel municipality names closely enough
+- `geopandas`, `shapely`, and `folium` are installed
+
+### AI Commentary Does Not Appear
+
+Check:
+
+- `OPENAI_API_KEY` is present if AI generation is expected
+- network access is available on the server
+- the configured model is available
+
+The app should still show fallback commentary if AI is unavailable.
+
+### Indicator Is Missing
+
+Check:
+
+- exact column name in `Skupna Tabela`
+- exact label in `mapping.xlsx`
+- whether the indicator is excluded from top/bottom
+- whether the selected group contains that indicator
+
+## Maintenance Rules
+
+- Keep source Excel files versioned.
+- Run the importer after every data update.
+- Keep `assets/` and `data/` paths stable.
+- Do not commit `.streamlit/secrets.toml`.
+- Do not commit `__pycache__`, `.pyc`, `.DS_Store`, or Excel lock files.
+- Prefer adding focused helpers over large changes inside `ui.py`, which is already the largest file.
