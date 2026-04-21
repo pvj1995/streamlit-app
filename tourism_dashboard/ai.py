@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import streamlit as st
 
-from tourism_dashboard.config import AI_CACHE_CONNECTION_NAME_DEFAULT, AI_CACHE_TABLE_NAME
+from tourism_dashboard.config import (
+    AI_CACHE_CONNECTION_NAME_DEFAULT,
+    AI_CACHE_SCHEMA_TTL_SECONDS,
+    AI_CACHE_TABLE_NAME,
+)
 from tourism_dashboard.helpers import get_secret_value, sql
 
 if TYPE_CHECKING:
@@ -37,35 +41,45 @@ def get_ai_cache_connection() -> Tuple[Optional[Any], str]:
     return connection, connection_name
 
 
-def ensure_ai_cache_table(conn: Any) -> bool:
-    try:
-        with conn.session as session:
-            session.execute(
-                sql(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {AI_CACHE_TABLE_NAME} (
-                        cache_key TEXT PRIMARY KEY,
-                        payload_hash TEXT NOT NULL,
-                        region TEXT NOT NULL,
-                        group_name TEXT NOT NULL,
-                        response_text TEXT NOT NULL,
-                        model TEXT NOT NULL,
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                    )
-                    """
+@st.cache_data(show_spinner=False, ttl=AI_CACHE_SCHEMA_TTL_SECONDS)
+def _ensure_ai_cache_table_for_connection_cached(connection_name: str) -> bool:
+    connection_factory = cast(Any, getattr(st, "connection", None))
+    if connection_factory is None:
+        raise RuntimeError("Streamlit SQL connections are not available.")
+
+    conn = connection_factory(connection_name, type="sql")
+    with conn.session as session:
+        session.execute(
+            sql(
+                f"""
+                CREATE TABLE IF NOT EXISTS {AI_CACHE_TABLE_NAME} (
+                    cache_key TEXT PRIMARY KEY,
+                    payload_hash TEXT NOT NULL,
+                    region TEXT NOT NULL,
+                    group_name TEXT NOT NULL,
+                    response_text TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
+                """
             )
-            session.execute(sql(f"ALTER TABLE {AI_CACHE_TABLE_NAME} ENABLE ROW LEVEL SECURITY"))
-            session.execute(sql(f"REVOKE ALL ON TABLE {AI_CACHE_TABLE_NAME} FROM anon, authenticated"))
-            session.commit()
-        return True
+        )
+        session.execute(sql(f"ALTER TABLE {AI_CACHE_TABLE_NAME} ENABLE ROW LEVEL SECURITY"))
+        session.execute(sql(f"REVOKE ALL ON TABLE {AI_CACHE_TABLE_NAME} FROM anon, authenticated"))
+        session.commit()
+    return True
+
+
+def ensure_ai_cache_table_for_connection(connection_name: str) -> bool:
+    try:
+        return _ensure_ai_cache_table_for_connection_cached(connection_name)
     except Exception:
         return False
 
 
 def get_cached_ai_commentary(cache_key: str) -> Optional[Dict[str, Any]]:
-    conn, _ = get_ai_cache_connection()
-    if conn is None or not ensure_ai_cache_table(conn):
+    conn, connection_name = get_ai_cache_connection()
+    if conn is None or not ensure_ai_cache_table_for_connection(connection_name):
         return None
 
     try:
@@ -104,10 +118,10 @@ def store_cached_ai_commentary(
     group_name: str,
     text: str,
     model: str,
-) -> None:
-    conn, _ = get_ai_cache_connection()
-    if conn is None or not ensure_ai_cache_table(conn):
-        return
+) -> bool:
+    conn, connection_name = get_ai_cache_connection()
+    if conn is None or not ensure_ai_cache_table_for_connection(connection_name):
+        return False
 
     try:
         with conn.session as session:
@@ -138,8 +152,9 @@ def store_cached_ai_commentary(
                 },
             )
             session.commit()
+        return True
     except Exception:
-        return
+        return False
 
 
 def rows_to_prompt_lines(rows: List[Dict[str, Any]]) -> str:

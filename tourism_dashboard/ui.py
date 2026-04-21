@@ -1949,6 +1949,9 @@ def render_region_top_bottom_and_ai(
 
     st.markdown("---")
     render_ai_section_header()
+    ai_status_container = st.empty()
+    ai_output_container = st.empty()
+    ai_output_container.empty()
 
     ai_signature_raw = json.dumps(
         {
@@ -1980,26 +1983,26 @@ def render_region_top_bottom_and_ai(
 
     if ai_state_key not in st.session_state or should_retry_timeout_fallback:
         cached_payload = get_cached_ai_commentary(ai_cache_key)
-        if cached_payload:
+        cached_text = str(cached_payload.get("text") or "").strip() if cached_payload else ""
+        if cached_payload and cached_text:
             st.session_state[ai_state_key] = {
-                "text": cached_payload.get("text", ""),
+                "text": cached_text,
                 "source": "db_cache",
                 "error": None,
+                "region": selected_region,
+                "signature": ai_signature,
             }
         else:
-            with st.spinner("Generiram komentar in priporočila..."):
-                ai_text, ai_source, ai_error = generate_region_ai_commentary(
-                    selected_region,
-                    group_sections,
-                    market_analysis=market_ai_context,
-                )
-            st.session_state[ai_state_key] = {
-                "text": ai_text,
-                "source": ai_source,
-                "error": ai_error,
-            }
-            if ai_source == "ai" and ai_text:
-                store_cached_ai_commentary(
+            with ai_status_container:
+                with st.spinner("Generiram komentar in priporočila..."):
+                    ai_text, ai_source, ai_error = generate_region_ai_commentary(
+                        selected_region,
+                        group_sections,
+                        market_analysis=market_ai_context,
+                    )
+            cache_store_failed = False
+            if ai_source == "ai" and str(ai_text or "").strip():
+                cache_store_failed = not store_cached_ai_commentary(
                     ai_cache_key,
                     payload_hash=ai_payload_hash,
                     region_name=selected_region,
@@ -2007,23 +2010,42 @@ def render_region_top_bottom_and_ai(
                     text=ai_text,
                     model=str(get_secret_value("OPENAI_MODEL", "gpt-5.4") or "gpt-5.4"),
                 )
+            st.session_state[ai_state_key] = {
+                "text": str(ai_text or "").strip(),
+                "source": ai_source,
+                "error": ai_error,
+                "region": selected_region,
+                "signature": ai_signature,
+                "cache_store_failed": cache_store_failed,
+            }
 
+    ai_status_container.empty()
     ai_payload = st.session_state.get(ai_state_key, {})
-    if ai_payload.get("source") == "db_cache":
-        st.caption("AI komentar je prebran iz trajnega podatkovnega cache-a.")
-    elif ai_payload.get("source") == "fallback":
-        error_text = str(ai_payload.get("error") or "")
-        if "insufficient_quota" in error_text:
-            st.caption("OPENAI_API_KEY nima več razpoložljive kvote. Prikazan je samodejni komentar na osnovi kazalnikov.")
-        elif "HTTP 429" in error_text:
-            st.caption("AI klic je omejen zaradi preveč zahtevkov (rate limit). Prikazan je samodejni komentar na osnovi kazalnikov.")
-        else:
-            st.caption("OPENAI_API_KEY ni nastavljen ali AI klic ni uspel. Prikazan je samodejni komentar na osnovi kazalnikov.")
+    ai_text = str(ai_payload.get("text") or "").strip()
+    with ai_output_container.container():
+        if ai_payload.get("region") and ai_payload.get("region") != selected_region:
+            st.info("AI komentar za izbrano območje se pripravlja.")
+            return
 
-    if ai_payload.get("error"):
-        st.caption(f"Podrobnosti: {ai_payload['error']}")
-    if ai_payload.get("text"):
-        st.markdown(ai_payload["text"])
+        if ai_payload.get("source") == "db_cache":
+            st.caption("AI komentar je prebran iz trajnega podatkovnega cache-a.")
+        elif ai_payload.get("source") == "fallback":
+            error_text = str(ai_payload.get("error") or "")
+            if "insufficient_quota" in error_text:
+                st.caption("OPENAI_API_KEY nima več razpoložljive kvote. Prikazan je samodejni komentar na osnovi kazalnikov.")
+            elif "HTTP 429" in error_text:
+                st.caption("AI klic je omejen zaradi preveč zahtevkov (rate limit). Prikazan je samodejni komentar na osnovi kazalnikov.")
+            else:
+                st.caption("OPENAI_API_KEY ni nastavljen ali AI klic ni uspel. Prikazan je samodejni komentar na osnovi kazalnikov.")
+        elif ai_payload.get("cache_store_failed"):
+            st.caption("AI komentar je bil ustvarjen, vendar ga ni bilo mogoče shraniti v trajni podatkovni cache.")
+
+        if ai_payload.get("error"):
+            st.caption(f"Podrobnosti: {ai_payload['error']}")
+        if ai_text:
+            st.markdown(ai_text)
+        else:
+            st.info("AI komentar za izbrano območje še ni na voljo.")
 
 
 def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:

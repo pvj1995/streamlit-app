@@ -149,7 +149,7 @@ podatkovna baza pa produkcijski vir za aplikacijo.
 Priporočen potek:
 
 ```text
-uredite Excel -> zaženite uvoz -> preverite aplikacijo -> objavite/uporabite
+uredite Excel -> zaženite uvoz -> ponovno zaženite aplikacijo ali počistite cache -> preverite aplikacijo
 ```
 
 Uvoz podatkov:
@@ -160,6 +160,10 @@ python scripts/import_excel_to_db.py
 
 Ta ukaz prebere Excel datoteke iz mape `data/`, jih uvozi v PostgreSQL/Supabase in
 preveri, ali se vsebina v bazi ujema s prebranimi Excel podatki.
+
+Aplikacija zaradi hitrosti začasno hrani podatke iz baze. Po uspešnem uvozu zato
+ponovno zaženite Streamlit aplikacijo ali počistite Streamlit cache, če morajo biti
+spremembe vidne takoj.
 
 ### Dodajanje Ali Odstranjevanje Kazalnika
 
@@ -230,7 +234,13 @@ je treba zagnati:
 python scripts/import_excel_to_db.py
 ```
 
+Če je bil uvoz uspešen, spremembe pa še niso vidne, ponovno zaženite aplikacijo ali
+počistite Streamlit cache. Podatki iz baze so zaradi hitrosti lahko začasno predpomnjeni.
+
 ### AI Komentar Se Ne Prikaže
 
 Če AI ni na voljo, aplikacija prikaže rezervni komentar. Če se ne prikaže nič,
 preverite nastavitve API ključa, povezavo in strežniške dnevnike.
+
+Če se AI komentar ustvari, vendar aplikacija opozori, da ga ni bilo mogoče shraniti v
+trajni cache, preverite nastavitev SQL povezave za AI cache in pravice uporabnika v bazi.

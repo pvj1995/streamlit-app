@@ -107,6 +107,11 @@ url = "postgresql://USER:PASSWORD@HOST:5432/postgres"
 In this mode the app reads imported data from PostgreSQL/Supabase through Streamlit SQL
 connections. The Excel uploader in the sidebar remains available as a temporary override.
 
+Imported dashboard frames are cached in Streamlit for six hours
+(`DASHBOARD_DB_CACHE_TTL_SECONDS` in [tourism_dashboard/config.py](./tourism_dashboard/config.py)).
+After running a new import, restart the Streamlit process or clear Streamlit's cache if the new
+data must appear immediately.
+
 ## Database Schema
 
 The importer creates and updates these tables:
@@ -198,7 +203,7 @@ If the verification fails, treat the import as failed and do not deploy that dat
 Best current workflow:
 
 ```text
-edit Excel files -> run importer -> run smoke check -> deploy/restart app
+edit Excel files -> run importer -> run smoke check -> deploy/restart app or clear cache
 ```
 
 Do not manually edit `dashboard_frame_cells` in Supabase except for an emergency. The database is
@@ -355,6 +360,11 @@ If `OPENAI_API_KEY` is configured, the app calls the OpenAI API. If the call fai
 missing, the app displays fallback commentary. If the SQL cache is available, generated commentary is
 stored in `ai_commentary_cache` and reused for unchanged input payloads.
 
+The AI cache table/security check is also cached for six hours
+(`AI_CACHE_SCHEMA_TTL_SECONDS`) so normal cache reads and writes do not repeatedly run database DDL.
+If an AI response is generated but cannot be saved to the SQL cache, the app displays a short cache
+save warning under the AI output.
+
 ## Verification
 
 Compile check:
@@ -414,8 +424,19 @@ Check:
 - `OPENAI_API_KEY` is present if AI generation is expected
 - network access is available on the server
 - the configured model is available
+- `AI_CACHE_CONNECTION_NAME` points to a writable SQL connection if persistent AI cache is expected
 
 The app should still show fallback commentary if AI is unavailable.
+
+### Updated Database Data Does Not Appear Immediately
+
+Check:
+
+- `python scripts/import_excel_to_db.py` completed successfully
+- the Streamlit process was restarted after the import, or Streamlit cache was cleared
+- `DATA_BACKEND = "database"` is active
+
+Without a restart or cache clear, imported dashboard data can remain cached for up to six hours.
 
 ### Indicator Is Missing
 

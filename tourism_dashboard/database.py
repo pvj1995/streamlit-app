@@ -8,6 +8,7 @@ import streamlit as st
 
 from tourism_dashboard.config import (
     DASHBOARD_DB_CONNECTION_NAME_DEFAULT,
+    DASHBOARD_DB_CACHE_TTL_SECONDS,
     DASHBOARD_DB_SCHEMA_VERSION,
     DASHBOARD_MAIN_FRAME_KEY,
     DASHBOARD_MAPPING_FRAME_KEY,
@@ -52,7 +53,7 @@ def _get_connection(connection_name: str | None = None) -> Any:
     return connection_factory(connection_name or get_dashboard_connection_name(), type="sql")
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=DASHBOARD_DB_CACHE_TTL_SECONDS)
 def database_has_dashboard_frames(connection_name: str) -> bool:
     conn = _get_connection(connection_name)
     try:
@@ -94,7 +95,7 @@ def database_has_dashboard_frames(connection_name: str) -> bool:
     return bool(frame_result.iloc[0]["exists"]) if frame_result is not None and not frame_result.empty else False
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=DASHBOARD_DB_CACHE_TTL_SECONDS)
 def load_dashboard_data_signature(connection_name: str) -> str:
     conn = _get_connection(connection_name)
     result = conn.query(
@@ -113,7 +114,7 @@ def load_dashboard_data_signature(connection_name: str) -> str:
     return f"db:{signature}"
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=DASHBOARD_DB_CACHE_TTL_SECONDS)
 def load_dashboard_frame(connection_name: str, frame_key: str) -> pd.DataFrame:
     conn = _get_connection(connection_name)
     meta_df = conn.query(
@@ -183,7 +184,7 @@ def _build_frame_from_parts(
     return pd.concat(series_list, axis=1)
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=DASHBOARD_DB_CACHE_TTL_SECONDS)
 def load_dashboard_frames(connection_name: str, frame_keys: tuple[str, ...]) -> dict[str, pd.DataFrame]:
     if not frame_keys:
         return {}
@@ -263,7 +264,7 @@ def load_indicator_groups_from_db() -> dict[str, list[str]]:
     return groups
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=DASHBOARD_DB_CACHE_TTL_SECONDS)
 def _load_market_frame_catalog(connection_name: str, metric: str) -> pd.DataFrame:
     conn = _get_connection(connection_name)
     try:
