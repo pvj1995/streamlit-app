@@ -55,6 +55,8 @@ def ensure_ai_cache_table(conn: Any) -> bool:
                     """
                 )
             )
+            session.execute(sql(f"ALTER TABLE {AI_CACHE_TABLE_NAME} ENABLE ROW LEVEL SECURITY"))
+            session.execute(sql(f"REVOKE ALL ON TABLE {AI_CACHE_TABLE_NAME} FROM anon, authenticated"))
             session.commit()
         return True
     except Exception:

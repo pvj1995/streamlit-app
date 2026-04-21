@@ -34,3 +34,11 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_frame_cells_frame_row
 
 CREATE INDEX IF NOT EXISTS idx_dashboard_frames_type_metric
     ON dashboard_frames (frame_type, metric, year, area_level, frame_kind);
+
+ALTER TABLE public.dashboard_frames ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dashboard_frame_columns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dashboard_frame_cells ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.dashboard_frames FROM anon, authenticated;
+REVOKE ALL ON TABLE public.dashboard_frame_columns FROM anon, authenticated;
+REVOKE ALL ON TABLE public.dashboard_frame_cells FROM anon, authenticated;
