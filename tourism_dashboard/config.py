@@ -21,8 +21,7 @@ PAGE_TITLE = (
     "Ključni podatki in kazalniki"
 )
 YEAR_NOTE_TEXT = (
-    "***Podatki in kazalniki se nanašajo na leto 2024 (v kolikor leto ni "
-    "posebej navedeno), leto 2025 in primerjalne podatke z letom 2019 "
+    "***Podatki in kazalniki se nanašajo na leto 2024, leto 2025 in primerjalne podatke z letom 2019 "
     "(posebej označeno)***"
 )
 FOOTER_SOURCE_TEXT = (
