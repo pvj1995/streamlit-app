@@ -304,9 +304,12 @@ footer_logo_path = first_existing(
     LOGOS_DIR / FOOTER_LOGO_FILENAME,
     BASE_DIR / FOOTER_LOGO_FILENAME,
 )
+
+st.markdown("---")
+
 if footer_logo_path.exists():
-    st.image(str(footer_logo_path), width=200)
+    st.image(str(footer_logo_path), width=400)
 
 st.caption(FOOTER_SOURCE_TEXT)
 st.caption(FOOTER_AUTHOR_TEXT)
-st.markdown("---")
+
