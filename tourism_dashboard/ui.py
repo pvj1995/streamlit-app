@@ -518,6 +518,24 @@ AREA_REFERENCE_COLOR = "#f59e0b"
 SECONDARY_REFERENCE_COLOR = "#dc2626"
 
 
+def round_market_structure_display_counts(values: pd.Series) -> pd.Series:
+    numeric_values = pd.to_numeric(values, errors="coerce")
+    rounded_values = pd.Series(pd.array([pd.NA] * len(numeric_values), dtype="Int64"), index=numeric_values.index)
+    valid_values = numeric_values[numeric_values.notna()].astype(float)
+    if valid_values.empty:
+        return rounded_values
+
+    floored_values = pd.Series(np.floor(valid_values.to_numpy()), index=valid_values.index, dtype=int)
+    target_total = int(round(float(valid_values.sum())))
+    remainder = max(0, target_total - int(floored_values.sum()))
+    if remainder > 0:
+        fractional_parts = (valid_values - floored_values).sort_values(ascending=False)
+        floored_values.loc[fractional_parts.index[:remainder]] += 1
+
+    rounded_values.loc[valid_values.index] = floored_values.astype("Int64")
+    return rounded_values
+
+
 def render_market_growth_chart(
     growth_df: pd.DataFrame,
     title: str,
@@ -839,13 +857,19 @@ def render_market_structure_pie_table(
     structure_df: pd.DataFrame,
     *,
     pie_title: str,
+    value_column_label: str,
+    value_indicator_label: str,
+    category_column_label: str = "Trg",
+    total_row_label: str = MARKET_TOTAL_DISPLAY_LABEL,
+    legend_title: str = "Trgi",
+    color_discrete_map: dict[str, str] | None = None,
     note_text: str | None = None,
 ) -> None:
     if structure_df.empty:
         st.info("Za izbran prikaz ni dovolj podatkov o strukturi po trgih.")
         return
 
-    display_df = structure_df.copy().dropna(subset=["Delež_norm"])
+    display_df = structure_df.copy().dropna(subset=["Delež_norm", "Vrednost"])
     if display_df.empty:
         st.info("Za izbran prikaz ni dovolj podatkov o strukturi po trgih.")
         return
@@ -854,6 +878,19 @@ def render_market_structure_pie_table(
     display_df["Trg_short"] = display_df["Trg_full"].apply(shorten_market_axis_label)
     display_df = display_df.sort_values("Delež_norm", ascending=False).reset_index(drop=True)
     display_df["Trg_short_wrapped"] = display_df["Trg_short"].apply(lambda value: shorten_label(value, 24))
+    display_df["Vrednost_display"] = round_market_structure_display_counts(display_df["Vrednost"])
+    display_df["Share_label"] = display_df["Delež_norm"].apply(lambda value: format_pct(float(value) * 100.0, 1))
+    display_df["Value_label"] = display_df["Vrednost_display"].apply(
+        lambda value: format_indicator_value_map(value_indicator_label, value)
+    )
+    display_df["Hover_label"] = display_df.apply(
+        lambda row: (
+            f"<b>{row['Trg_full']}</b><br>"
+            f"Delež: {row['Share_label']}<br>"
+            f"{value_column_label}: {row['Value_label']}"
+        ),
+        axis=1,
+    )
 
     chart_col, table_col = st.columns([1.2, 1])
     with chart_col:
@@ -863,34 +900,488 @@ def render_market_structure_pie_table(
             names="Trg_short_wrapped",
             values="Delež_norm",
             color="Trg_short",
-            color_discrete_map=get_market_chart_color_map(),
+            color_discrete_map=color_discrete_map or get_market_chart_color_map(),
             hole=0.4,
-            custom_data=["Trg_full"],
         )
         fig.update_traces(
             textposition="inside",
             textinfo="percent+label",
-            hovertemplate="<b>%{customdata[0]}</b><br>Delež: %{percent}<extra></extra>",
+            hovertext=display_df["Hover_label"],
+            hovertemplate="%{hovertext}<extra></extra>",
         )
         fig.update_layout(
             margin=dict(t=10, b=10, l=10, r=10),
             showlegend=True,
-            legend_title_text="Trgi",
+            legend_title_text=legend_title,
         )
         st.plotly_chart(fig, width="stretch")
 
     with table_col:
         st.markdown("**Tabela**")
-        table = pd.DataFrame(
-            {
-                "Trg": display_df["Trg_full"],
-                "Delež (%)": display_df["Delež_norm"],
+        table = display_df[["Trg_full", "Delež_norm", "Vrednost_display"]].rename(
+            columns={
+                "Trg_full": category_column_label,
+                "Delež_norm": "Delež (%)",
+                "Vrednost_display": value_column_label,
             }
         )
-        render_ranked_dataframe(table)
+        total_row = pd.DataFrame(
+            [
+                {
+                    category_column_label: total_row_label,
+                    "Delež (%)": 1.0,
+                    value_column_label: int(display_df["Vrednost_display"].sum(skipna=True)),
+                }
+            ]
+        )
+        table = pd.concat([table, total_row], ignore_index=True)
+        st.dataframe(
+            table,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                **make_localized_column_config(
+                    table,
+                    source_columns={value_column_label: value_indicator_label},
+                    width_overrides={
+                        category_column_label: "medium",
+                        value_column_label: "small",
+                    },
+                ),
+                "Delež (%)": st.column_config.NumberColumn(format="percent", width="small"),
+            },
+        )
 
     if note_text:
         st.caption(note_text)
+
+
+ACCOMMODATION_CAPACITY_YEARS = [2019, 2024, 2025]
+ACCOMMODATION_CAPACITY_GROWTH_PERIODS = {
+    "2024/2019": (2019, 2024),
+    "2025/2019": (2019, 2025),
+    "2025/2024": (2024, 2025),
+}
+ACCOMMODATION_TYPE_HOTELS = "Hoteli in podobni nastanitveni obrati"
+ACCOMMODATION_TYPE_CAMPS = "Kampi"
+ACCOMMODATION_TYPE_OTHER = "Druge vrste nastanitvenih obratov"
+ACCOMMODATION_CAPACITY_CATEGORY_LABELS = [
+    ACCOMMODATION_TYPE_HOTELS,
+    ACCOMMODATION_TYPE_CAMPS,
+    ACCOMMODATION_TYPE_OTHER,
+]
+ACCOMMODATION_CAPACITY_COLOR_MAP = {
+    ACCOMMODATION_TYPE_HOTELS: "#2563eb",
+    ACCOMMODATION_TYPE_CAMPS: "#16a34a",
+    ACCOMMODATION_TYPE_OTHER: "#f59e0b",
+    "Skupaj vse vrste obratov": "#0f766e",
+    "Skupaj vse vrste kapacitet": "#0f766e",
+}
+
+ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
+    "establishments": {
+        "value_column_label": "Število obratov",
+        "total_label": "Skupaj vse vrste obratov",
+        "years": {
+            2019: {
+                ACCOMMODATION_TYPE_HOTELS: [["Število hotelov ipd. NO 2019"]],
+                ACCOMMODATION_TYPE_CAMPS: [["Število kampov 2019"]],
+                ACCOMMODATION_TYPE_OTHER: [
+                    [
+                        "Število turističnih kmetij z nastanitvijo 2019",
+                        "Število vseh drugih vrst NO 2019",
+                    ],
+                    ["Število vseh drugih vrst NO 2019"],
+                ],
+            },
+            2024: {
+                ACCOMMODATION_TYPE_HOTELS: [["Število hotelov ipd. NO 2024"]],
+                ACCOMMODATION_TYPE_CAMPS: [["Število kampov 2024"]],
+                ACCOMMODATION_TYPE_OTHER: [
+                    [
+                        "Število turističnih kmetij z nastanitvijo 2024",
+                        "Število vseh drugih vrst NO 2024",
+                    ],
+                    ["Število vseh drugih vrst NO 2024"],
+                ],
+            },
+            2025: {
+                ACCOMMODATION_TYPE_HOTELS: [["Število hotelov ipd. NO 2025"]],
+                ACCOMMODATION_TYPE_CAMPS: [["Število kampov 2025"]],
+                ACCOMMODATION_TYPE_OTHER: [
+                    [
+                        "Število turističnih kmetij z nastanitvijo 2025",
+                        "Število vseh drugih vrst NO 2025",
+                    ],
+                    ["Število vseh drugih vrst NO 2025"],
+                ],
+            },
+        },
+    },
+    "rooms": {
+        "value_column_label": "Sobe (nedeljive enote)",
+        "total_label": "Skupaj vse vrste kapacitet",
+        "years": {
+            2019: {
+                ACCOMMODATION_TYPE_HOTELS: [
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati 2019"],
+                    ["Število sob v hotelih ipd. NO 2019"],
+                ],
+                ACCOMMODATION_TYPE_CAMPS: [
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi 2019"],
+                    ["Število enot v kampih 2019"],
+                ],
+                ACCOMMODATION_TYPE_OTHER: [
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet 2019"],
+                    [
+                        "Število sob v turističnih kmetijah z nastanitvijo 2019",
+                        "Število sob v vseh drugih vrstah NO 2019",
+                    ],
+                    ["Število sob v vseh drugih vrstah NO 2019"],
+                ],
+            },
+            2024: {
+                ACCOMMODATION_TYPE_HOTELS: [
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati"],
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati 2024"],
+                    ["Število sob v hotelih ipd. NO 2024"],
+                ],
+                ACCOMMODATION_TYPE_CAMPS: [
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi"],
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi 2024"],
+                    ["Število enot v kampih 2024"],
+                ],
+                ACCOMMODATION_TYPE_OTHER: [
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet"],
+                    ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet 2024"],
+                    [
+                        "Število sob v turističnih kmetijah z nastanitvijo 2024",
+                        "Število sob v vseh drugih vrstah NO 2024",
+                    ],
+                    ["Število sob v vseh drugih vrstah NO 2024"],
+                ],
+            },
+            2025: {
+                ACCOMMODATION_TYPE_HOTELS: [["Število sob v hotelih ipd. NO 2025"]],
+                ACCOMMODATION_TYPE_CAMPS: [["Število enot v kampih 2025"]],
+                ACCOMMODATION_TYPE_OTHER: [
+                    [
+                        "Število sob v turističnih kmetijah z nastanitvijo 2025",
+                        "Število sob v vseh drugih vrstah NO 2025",
+                    ],
+                    ["Število sob v vseh drugih vrstah NO 2025"],
+                ],
+            },
+        },
+    },
+    "beds": {
+        "value_column_label": "Stalna ležišča",
+        "total_label": "Skupaj vse vrste kapacitet",
+        "years": {
+            2019: {
+                ACCOMMODATION_TYPE_HOTELS: [
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Hoteli in podobni obrati 2019"],
+                    ["Število stalnih ležišč v hotelih ipd. NO 2019"],
+                ],
+                ACCOMMODATION_TYPE_CAMPS: [
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Kampi 2019"],
+                    ["Število ležišč v kampih 2019"],
+                ],
+                ACCOMMODATION_TYPE_OTHER: [
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Druge vrste kapacitet 2019"],
+                    [
+                        "Število ležišč v turističnih kmetijah z nastanitvijo 2019",
+                        "Število ležišč v vseh drugih vrstah NO 2019",
+                    ],
+                    ["Število ležišč v vseh drugih vrstah NO 2019"],
+                ],
+            },
+            2024: {
+                ACCOMMODATION_TYPE_HOTELS: [
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Hoteli in podobni obrati"],
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Hoteli in podobni obrati 2024"],
+                    ["Število stalnih ležišč v hotelih ipd. NO 2024"],
+                ],
+                ACCOMMODATION_TYPE_CAMPS: [
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Kampi"],
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Kampi 2024"],
+                    ["Število ležišč v kampih 2024"],
+                ],
+                ACCOMMODATION_TYPE_OTHER: [
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Druge vrste kapacitet"],
+                    ["Struktura nastanitvenih kapacitet - Stalna ležišča - Druge vrste kapacitet 2024"],
+                    [
+                        "Število ležišč v turističnih kmetijah z nastanitvijo 2024",
+                        "Število ležišč v vseh drugih vrstah NO 2024",
+                    ],
+                    ["Število ležišč v vseh drugih vrstah NO 2024"],
+                ],
+            },
+            2025: {
+                ACCOMMODATION_TYPE_HOTELS: [["Število stalnih ležišč v hotelih ipd. NO 2025"]],
+                ACCOMMODATION_TYPE_CAMPS: [["Število ležišč v kampih 2025"]],
+                ACCOMMODATION_TYPE_OTHER: [
+                    [
+                        "Število ležišč v turističnih kmetijah z nastanitvijo 2025",
+                        "Število ležišč v vseh drugih vrstah NO 2025",
+                    ],
+                    ["Število ležišč v vseh drugih vrstah NO 2025"],
+                ],
+            },
+        },
+    },
+}
+
+
+def sum_first_available_accommodation_columns(
+    source_df: pd.DataFrame,
+    candidate_groups: list[list[str]],
+) -> float | None:
+    for candidate_group in candidate_groups:
+        existing_columns = [column for column in candidate_group if column in source_df.columns]
+        if not existing_columns:
+            continue
+        total = 0.0
+        for column in existing_columns:
+            total += float(pd.to_numeric(source_df[column], errors="coerce").sum(skipna=True))
+        return total
+    return None
+
+
+def build_accommodation_capacity_structure_df(
+    source_df: pd.DataFrame,
+    spec_key: str,
+    year: int,
+) -> tuple[pd.DataFrame, list[str]]:
+    spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
+    year_specs = cast(dict[int, dict[str, list[list[str]]]], spec["years"])
+    category_specs = year_specs.get(year, {})
+    missing_categories: list[str] = []
+    rows: list[dict[str, Any]] = []
+
+    for category_label in ACCOMMODATION_CAPACITY_CATEGORY_LABELS:
+        value = sum_first_available_accommodation_columns(
+            source_df,
+            category_specs.get(category_label, []),
+        )
+        if value is None:
+            missing_categories.append(category_label)
+            continue
+        rows.append({"Trg": category_label, "Vrednost": value})
+
+    structure_df = pd.DataFrame(rows)
+    if structure_df.empty:
+        return pd.DataFrame(columns=["Trg", "Vrednost", "Delež_norm"]), missing_categories
+
+    total_value = float(structure_df["Vrednost"].sum(skipna=True))
+    if not np.isfinite(total_value) or total_value <= 0:
+        return pd.DataFrame(columns=["Trg", "Vrednost", "Delež_norm"]), missing_categories
+
+    structure_df["Delež_norm"] = structure_df["Vrednost"] / total_value
+    return structure_df, missing_categories
+
+
+def render_accommodation_capacity_missing_message(
+    *,
+    title: str,
+    year_or_period: str,
+    missing_categories: list[str],
+) -> None:
+    missing_text = ", ".join(missing_categories) if missing_categories else "zahtevane vrste kapacitet"
+    st.info(
+        f"Za prikaz »{title}« za {year_or_period} trenutno ni dovolj podatkov. "
+        f"Manjkajo stolpci za: {missing_text}."
+    )
+
+
+def render_accommodation_capacity_structure_tab(
+    *,
+    source_df: pd.DataFrame,
+    spec_key: str,
+    title: str,
+    area_label: str,
+    key_prefix: str,
+) -> None:
+    selected_year = st.selectbox(
+        "Leto",
+        ACCOMMODATION_CAPACITY_YEARS,
+        index=len(ACCOMMODATION_CAPACITY_YEARS) - 1,
+        key=f"{key_prefix}_year",
+    )
+    spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
+    value_column_label = cast(str, spec["value_column_label"])
+    total_label = cast(str, spec["total_label"])
+
+    with st.container(border=True):
+        render_section_heading(
+            f"{title}: {area_label}",
+            f"Struktura po vrstah kapacitet za leto {selected_year}.",
+        )
+        structure_df, missing_categories = build_accommodation_capacity_structure_df(
+            source_df,
+            spec_key,
+            selected_year,
+        )
+        if structure_df.empty:
+            render_accommodation_capacity_missing_message(
+                title=title,
+                year_or_period=f"leto {selected_year}",
+                missing_categories=missing_categories,
+            )
+            return
+
+        if missing_categories:
+            st.caption(f"Manjkajo podatki za: {', '.join(missing_categories)}.")
+
+        render_market_structure_pie_table(
+            structure_df,
+            pie_title=f"{title} ({selected_year})",
+            value_column_label=value_column_label,
+            value_indicator_label=f"{value_column_label} {selected_year}",
+            category_column_label="Vrsta",
+            total_row_label=total_label,
+            legend_title="Vrste",
+            color_discrete_map=ACCOMMODATION_CAPACITY_COLOR_MAP,
+        )
+
+
+def build_accommodation_capacity_growth_df(
+    source_df: pd.DataFrame,
+    spec_key: str,
+    start_year: int,
+    end_year: int,
+) -> tuple[pd.DataFrame, list[str]]:
+    spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
+    total_label = cast(str, spec["total_label"])
+    start_df, missing_start = build_accommodation_capacity_structure_df(source_df, spec_key, start_year)
+    end_df, missing_end = build_accommodation_capacity_structure_df(source_df, spec_key, end_year)
+    missing_context = [
+        *(f"{start_year}: {category}" for category in missing_start),
+        *(f"{end_year}: {category}" for category in missing_end),
+    ]
+    if start_df.empty or end_df.empty:
+        return pd.DataFrame(columns=["Vrsta", "Rast", "Začetna vrednost", "Končna vrednost"]), missing_context
+
+    start_values = dict(zip(start_df["Trg"], start_df["Vrednost"]))
+    end_values = dict(zip(end_df["Trg"], end_df["Vrednost"]))
+    start_values[total_label] = float(start_df["Vrednost"].sum(skipna=True))
+    end_values[total_label] = float(end_df["Vrednost"].sum(skipna=True))
+
+    rows: list[dict[str, Any]] = []
+    for label in [*ACCOMMODATION_CAPACITY_CATEGORY_LABELS, total_label]:
+        start_value = float(start_values.get(label, np.nan))
+        end_value = float(end_values.get(label, np.nan))
+        if not np.isfinite(start_value) or start_value <= 0 or not np.isfinite(end_value):
+            continue
+        rows.append(
+            {
+                "Vrsta": label,
+                "Rast": (end_value / start_value) - 1.0,
+                "Začetna vrednost": start_value,
+                "Končna vrednost": end_value,
+            }
+        )
+
+    return pd.DataFrame(rows), missing_context
+
+
+def render_accommodation_capacity_growth_chart(
+    growth_df: pd.DataFrame,
+    *,
+    title: str,
+    value_column_label: str,
+) -> None:
+    chart_df = growth_df.copy().dropna(subset=["Rast"])
+    if chart_df.empty:
+        st.info("Za izbran prikaz ni dovolj podatkov o rasti kapacitet.")
+        return
+
+    chart_df["Vrsta_chart"] = chart_df["Vrsta"].apply(lambda value: wrap_market_chart_label(value, 18))
+    chart_df["Rast_label"] = chart_df["Rast"].apply(format_growth_label)
+    chart_df["Začetna_label"] = chart_df["Začetna vrednost"].apply(lambda value: format_si_number(round(value)))
+    chart_df["Končna_label"] = chart_df["Končna vrednost"].apply(lambda value: format_si_number(round(value)))
+
+    st.markdown(f"**{title}**")
+    fig = px.bar(
+        chart_df,
+        x="Vrsta_chart",
+        y="Rast",
+        color="Vrsta",
+        color_discrete_map=ACCOMMODATION_CAPACITY_COLOR_MAP,
+        text="Rast_label",
+        custom_data=["Vrsta", "Rast_label", "Začetna_label", "Končna_label"],
+    )
+    fig.update_traces(
+        cliponaxis=False,
+        textposition="outside",
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "Rast: %{customdata[1]}<br>"
+            f"Začetna vrednost ({value_column_label}): %{{customdata[2]}}<br>"
+            f"Končna vrednost ({value_column_label}): %{{customdata[3]}}"
+            "<extra></extra>"
+        ),
+    )
+    fig.add_hline(y=0, line_color="#64748b", line_width=1)
+    fig.update_layout(
+        margin=dict(t=20, b=20, l=10, r=10),
+        showlegend=False,
+        xaxis_title="Vrste kapacitet",
+        yaxis_title="Rast",
+        uniformtext_minsize=10,
+        uniformtext_mode="hide",
+    )
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(tickformat=".0%", zeroline=True, zerolinewidth=1)
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_accommodation_capacity_growth_tab(
+    *,
+    source_df: pd.DataFrame,
+    spec_key: str,
+    title: str,
+    area_label: str,
+    key_prefix: str,
+) -> None:
+    period_labels = list(ACCOMMODATION_CAPACITY_GROWTH_PERIODS.keys())
+    selected_period = st.selectbox(
+        "Obdobje rasti",
+        period_labels,
+        index=len(period_labels) - 1,
+        key=f"{key_prefix}_growth_period",
+    )
+    start_year, end_year = ACCOMMODATION_CAPACITY_GROWTH_PERIODS[selected_period]
+    spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
+    value_column_label = cast(str, spec["value_column_label"])
+
+    with st.container(border=True):
+        render_section_heading(
+            f"{title}: {area_label}",
+            f"Rast med letoma {start_year} in {end_year}.",
+        )
+        growth_df, missing_context = build_accommodation_capacity_growth_df(
+            source_df,
+            spec_key,
+            start_year,
+            end_year,
+        )
+        if growth_df.empty:
+            render_accommodation_capacity_missing_message(
+                title=title,
+                year_or_period=f"obdobje {selected_period}",
+                missing_categories=missing_context,
+            )
+            return
+
+        if missing_context:
+            st.caption(f"Manjkajo podatki za: {', '.join(missing_context)}.")
+
+        render_accommodation_capacity_growth_chart(
+            growth_df,
+            title=f"{title} ({selected_period})",
+            value_column_label=value_column_label,
+        )
 
 
 def get_seasonality_sheet_key(view_title: str, group_col: str) -> str | None:
@@ -1092,6 +1583,8 @@ def render_market_arrivals_structure_distribution(
             render_market_structure_pie_table(
                 structure_df,
                 pie_title=f"Struktura prihodov po trgih ({selected_year})",
+                value_column_label="Prihodi",
+                value_indicator_label=f"Prihodi turistov SKUPAJ - {selected_year}",
                 note_text=(
                     "Deleži so izračunani iz vsote vseh mesečnih prihodov po posamezni skupini trgov "
                     f"v letu {selected_year} in nato normalizirani na 100%."
@@ -1133,6 +1626,8 @@ def render_market_arrivals_structure_distribution(
         render_market_structure_pie_table(
             structure_df,
             pie_title=f"{chosen_muni} – struktura prihodov po trgih ({selected_year})",
+            value_column_label="Prihodi",
+            value_indicator_label=f"Prihodi turistov SKUPAJ - {selected_year}",
             note_text=(
                 "Deleži so izračunani iz vsote vseh mesečnih prihodov po posamezni skupini trgov "
                 f"v letu {selected_year}."
@@ -1613,14 +2108,17 @@ def render_comparison_indicator_chart(
         )
         fig.update_traces(
             textposition="inside",
-            textinfo="percent",
-            customdata=plot_df[["Hover_label"]].to_numpy(),
-            hovertemplate="%{customdata[0]}<extra></extra>",
+            texttemplate="%{customdata[0]}<br>%{customdata[1]}",
+            customdata=plot_df[["Value_label", "Share_label"]].to_numpy(),
+            hovertext=plot_df["Hover_label"],
+            hovertemplate="%{hovertext}<extra></extra>",
         )
         fig.update_layout(
             margin=dict(t=20, b=10, l=10, r=10),
             legend_title_text=label_col,
             showlegend=True,
+            uniformtext_minsize=10,
+            uniformtext_mode="hide",
         )
         st.plotly_chart(fig, width="stretch")
         return
@@ -1752,6 +2250,8 @@ def render_market_structure_distribution(
         render_market_structure_pie_table(
             structure_df,
             pie_title="Tortni prikaz (normalizirano na 100%)",
+            value_column_label="Prenočitve",
+            value_indicator_label=f"Prenočitve turistov SKUPAJ - {selected_year}",
         )
         st.caption(
             "Opomba: deleži so izračunani uteženo glede na celotno število prenočitev "
@@ -1781,10 +2281,18 @@ def render_market_structure_distribution(
     municipality_structure["Delež_norm"] = (
         municipality_structure["Delež"] / municipality_total if municipality_total > 0 else np.nan
     )
+    municipality_total_overnights = float(municipality_row[base_weight_col]) if pd.notna(municipality_row[base_weight_col]) else np.nan
+    municipality_structure["Vrednost"] = (
+        municipality_structure["Delež_norm"] * municipality_total_overnights
+        if pd.notna(municipality_total_overnights) and municipality_total > 0
+        else np.nan
+    )
 
     render_market_structure_pie_table(
         municipality_structure,
         pie_title=f"{chosen_muni} – tortni prikaz (normalizirano na 100%)",
+        value_column_label="Prenočitve",
+        value_indicator_label=f"Prenočitve turistov SKUPAJ - {selected_year}",
     )
 
     st.markdown("**Tabela občin (povzetek)**")
@@ -2321,12 +2829,25 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         if selected_region == "Vsa območja":
             st.subheader(f"Tabela območij \n \n **:blue[{get_indicator_display_name(map_indicator)}]**")
             table = region_agg[[group_col, map_indicator]].copy()
+            agg_rule, _ = AGG_RULES.get(map_indicator, ("sum", None))
+            slovenia_total = df_slo_total_num.get(map_indicator, np.nan)
+            show_share_column = (
+                agg_rule == "sum"
+                and slovenia_total is not None
+                and not np.isnan(slovenia_total)
+                and float(slovenia_total) != 0.0
+            )
+            if show_share_column:
+                table["Delež Slovenije (%)"] = table[map_indicator].astype(float) / float(slovenia_total)
             table = table.sort_values(map_indicator, ascending=False, na_position="last")
             table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
             table = table.rename(columns={map_indicator: "Vrednost"})
+            source_columns = {"Vrednost": map_indicator}
+            if show_share_column:
+                source_columns["Delež Slovenije (%)"] = "Delež Slovenije (%)"
             render_ranked_dataframe(
                 table,
-                source_columns={"Vrednost": map_indicator},
+                source_columns=source_columns,
                 height=680,
             )
         else:
@@ -2411,6 +2932,130 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             group_col,
             group_sections,
             market_ai_context=market_ai_context,
+        )
+
+
+def render_accommodation_capacity_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:
+    st.caption(f"**Pogled:** {view_title}")
+    st.subheader("Nastanitvene kapacitete, struktura kapacitet in rast obsega po vrstah kapacitet")
+
+    numeric_df = ctx.numeric_df[ctx.numeric_df[group_col].notna()].copy()
+    groups: list[str] = sorted(cast(list[str], numeric_df[group_col].dropna().unique().tolist()))
+    if not groups:
+        st.warning("Ne najdem nobenih območij za izbran pogled.")
+        return
+
+    selected_group_raw = st.selectbox(
+        f"Izberi območje ({group_col})",
+        groups,
+        index=0,
+        key=f"capacity_sel_{group_col}",
+    )
+    if selected_group_raw is None:
+        st.info("Izberi območje za prikaz podatkov.")
+        return
+    selected_group = str(selected_group_raw)
+
+    mode = st.radio(
+        "Prikaz",
+        ["Celotno območje", "Občine znotraj območja"],
+        horizontal=True,
+        key=f"capacity_mode_{group_col}",
+    )
+
+    area_df = numeric_df[numeric_df[group_col] == selected_group].copy()
+    if area_df.empty:
+        st.info("Za izbrano območje ni podatkov.")
+        return
+
+    source_df = area_df
+    area_label = selected_group
+    if mode == "Občine znotraj območja":
+        municipality_names = area_df["Občine"].dropna().astype(str).tolist()
+        if not municipality_names:
+            st.info("Za izbrano območje ni občinskih podatkov.")
+            return
+        chosen_muni_raw = st.selectbox(
+            "Izberi občino",
+            municipality_names,
+            index=0,
+            key=f"capacity_muni_{group_col}",
+        )
+        if chosen_muni_raw is None:
+            return
+        area_label = str(chosen_muni_raw)
+        source_df = area_df[area_df["Občine"].astype(str) == area_label].copy()
+
+    (
+        establishments_structure_tab,
+        establishments_growth_tab,
+        rooms_structure_tab,
+        rooms_growth_tab,
+        beds_structure_tab,
+        beds_growth_tab,
+    ) = st.tabs(
+        [
+            "Struktura nastanitvenih obratov po vrstah obratov",
+            "Rast števila nastanitvenih obratov po vrstah obratov in skupaj",
+            "Struktura po vrstah nastanitvenih kapacitet – sobe (nedeljive enote)",
+            "Rast obsega sob (nedeljivih enot) po vrstah nastanitvenih kapacitet in skupaj",
+            "Struktura po vrstah nastanitvenih kapacitet – stalna ležišča",
+            "Rast obsega stalnih ležišč po vrstah nastanitvenih kapacitet in skupaj",
+        ]
+    )
+
+    with establishments_structure_tab:
+        render_accommodation_capacity_structure_tab(
+            source_df=source_df,
+            spec_key="establishments",
+            title="Struktura nastanitvenih obratov po vrstah obratov",
+            area_label=area_label,
+            key_prefix=f"capacity_establishments_structure_{group_col}",
+        )
+
+    with establishments_growth_tab:
+        render_accommodation_capacity_growth_tab(
+            source_df=source_df,
+            spec_key="establishments",
+            title="Rast števila nastanitvenih obratov po vrstah obratov in skupaj",
+            area_label=area_label,
+            key_prefix=f"capacity_establishments_growth_{group_col}",
+        )
+
+    with rooms_structure_tab:
+        render_accommodation_capacity_structure_tab(
+            source_df=source_df,
+            spec_key="rooms",
+            title="Struktura po vrstah nastanitvenih kapacitet – sobe (nedeljive enote)",
+            area_label=area_label,
+            key_prefix=f"capacity_rooms_structure_{group_col}",
+        )
+
+    with rooms_growth_tab:
+        render_accommodation_capacity_growth_tab(
+            source_df=source_df,
+            spec_key="rooms",
+            title="Rast obsega sob (nedeljivih enot) po vrstah nastanitvenih kapacitet in skupaj",
+            area_label=area_label,
+            key_prefix=f"capacity_rooms_growth_{group_col}",
+        )
+
+    with beds_structure_tab:
+        render_accommodation_capacity_structure_tab(
+            source_df=source_df,
+            spec_key="beds",
+            title="Struktura po vrstah nastanitvenih kapacitet – stalna ležišča",
+            area_label=area_label,
+            key_prefix=f"capacity_beds_structure_{group_col}",
+        )
+
+    with beds_growth_tab:
+        render_accommodation_capacity_growth_tab(
+            source_df=source_df,
+            spec_key="beds",
+            title="Rast obsega stalnih ležišč po vrstah nastanitvenih kapacitet in skupaj",
+            area_label=area_label,
+            key_prefix=f"capacity_beds_growth_{group_col}",
         )
 
 

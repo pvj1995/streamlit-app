@@ -44,6 +44,7 @@ def is_rate_like(column_name: str) -> bool:
         "Rast števila prenočitev 2025/2024 - SKUPAJ",
         "Rast števila prenočitev 2025/2024 - Domači",
         "Rast števila prenočitev 2025/2024 - Tuji",
+        "Povprečno število sob na nastanitveni obrat 2025",
         "Delež stalnih ležišč v Hotelih ipd.",
         "Delež sob (ned.enot) v kapacitetah višje kakovosti - (4* in 5*) 2025",
         "Delež sob (enot) v hotelih ipd. NO 2025",
@@ -60,6 +61,8 @@ def is_rate_like(column_name: str) -> bool:
         "Delež prebivalcev starih 15 let ali več z izobrazbo višjo od srednješolske",
         "Delež delovno aktivnih od vseh prebivalcev območja 2025",
         "Delež delovno aktivnih v turizmu (OECD/WTO) 2025",
+        "Delež reg.podjetij in s.p. v gostinstvu (I) od vseh podjetij na območju",
+        "Delež prihodkov reg.podjetij in s.p. v gostinstvu (I) v prihodkih vseh podjetij na območju",
         "EBITDA marža v reg.podjetjih in s.p. v Gostinstvu (I)",
         "Donosnost sredstev v reg. podjetjih in s.p. v Gostinstvu (I)",
         "Donosnost kapitala v reg. podjetjih in s.p. v Gostinstvu (I)",
@@ -76,10 +79,12 @@ def is_rate_like(column_name: str) -> bool:
         "Delež naseljenih stanovanj od vseh razp.",
         "Komunalni odpadki, zbrani  z javnim odvozom (kg/prebivalca)",
         "Štev.dijakov in študentov višjih strok. in visokošolsk.progr./1000 preb.",
+        "Delež počitniških stanovanj od vseh stanovanj",
         "Delež naseljenih stanovanj",
         "Delež delovno aktivnih v turizmu (OECD/WTO)",
         "Delež stroškov dela v prihodkih v reg. podj. v Gostinstvu (I)",
         "Delež stroškov dela v dod vredn. v reg. podj. v Gostinstvu (I)",
+        "Povprečna ekonomska velikost kmetijskih gospodarstev",
     ]
     return any(keyword in column_name for keyword in keywords)
 
@@ -152,6 +157,8 @@ def get_indicator_gap_unit(indicator: str) -> str:
 def format_indicator_value_tables(indicator: str, value):
     if is_percent_like(indicator):
         return round(value, 3)
+    if "GINI" in indicator:
+        return round(value, 1)
     return round(value, 2)
 
 
@@ -159,7 +166,7 @@ def format_indicator_value_map(indicator: str, value):
     if is_percent_like(indicator):
         return format_pct(float(value) * 100.0, 1)
     if "GINI" in indicator:
-        return format(round(value, 2), ".2f")
+        return format(round(value, 1), ".1f")
     if indicator in INDIKATORJI_Z_VALUTO:
         return f"{format_si_number(value)} €"
     return format_si_number(value)

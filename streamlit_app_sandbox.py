@@ -41,7 +41,11 @@ from tourism_dashboard.helpers import (
 from tourism_dashboard.maps import get_geojson_name_prop
 from tourism_dashboard.models import DashboardContext
 from tourism_dashboard.paths import BASE_DIR, DATA_DIR, LOGOS_DIR, first_existing
-from tourism_dashboard.ui import render_market_structure, render_view
+from tourism_dashboard.ui import (
+    render_accommodation_capacity_structure,
+    render_market_structure,
+    render_view,
+)
 
 MAIN_SHEET_NAME = "Skupna Tabela"
 MARKET_GROWTH_SHEET_NAME = "Rast prenočitev po trgih"
@@ -283,7 +287,13 @@ ctx = DashboardContext(
     dashboard_mode=dashboard_mode,
 )
 
-tab_kazalniki, tab_trgi = st.tabs(["Kazalniki", "Turistični promet in sezonskost po trgih"])
+tab_kazalniki, tab_trgi, tab_kapacitete = st.tabs(
+    [
+        "Kazalniki",
+        "Turistični promet in sezonskost po trgih",
+        "Nastanitvene kapacitete in struktura kapacitet",
+    ]
+)
 
 with tab_kazalniki:
     view_labels = [view[0] for view in views]
@@ -300,6 +310,15 @@ with tab_trgi:
         view_title, group_col = next(view for view in views if view[0] == selected_view_label)
     render_market_structure(view_title, group_col, ctx)
 
+with tab_kapacitete:
+    view_labels = [view[0] for view in views] + ["SLOVENIJA"]
+    selected_view_label = st.selectbox("Pogled", view_labels, index=0, key="view_kapacitete")
+    if selected_view_label == "SLOVENIJA":
+        view_title, group_col = "SLOVENIJA", "SLOVENIJA"
+    else:
+        view_title, group_col = next(view for view in views if view[0] == selected_view_label)
+    render_accommodation_capacity_structure(view_title, group_col, ctx)
+
 footer_logo_path = first_existing(
     LOGOS_DIR / FOOTER_LOGO_FILENAME,
     BASE_DIR / FOOTER_LOGO_FILENAME,
@@ -312,4 +331,3 @@ if footer_logo_path.exists():
 
 st.caption(FOOTER_SOURCE_TEXT)
 st.caption(FOOTER_AUTHOR_TEXT)
-

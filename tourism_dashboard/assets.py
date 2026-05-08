@@ -431,7 +431,7 @@ def render_page_header():
                 <div class="title-panel-content">
                     <div class="app-kicker">{APP_KICKER}</div>
                     <div class="app-title">
-                        {APP_TITLE} <span class="copyright">©</span>
+                        {APP_TITLE}
                     </div>
                     <div class="app-subtitle">{APP_SUBTITLE}</div>
                     <div class="app-description">{APP_DESCRIPTION}</div>

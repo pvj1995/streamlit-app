@@ -11,6 +11,7 @@ from tourism_dashboard.config import (
     GINI_2025_VALUES,
     GINI_CHANGE_2024_2019,
     GINI_CHANGE_2025_2019,
+    GINI_CHANGE_2025_2024,
     MARKET_PREFIX,
     TOP_BOTTOM_EXCLUDED_INDICATORS,
     TOP_BOTTOM_GROUP_LIMITS,
@@ -162,6 +163,8 @@ def get_precomputed_indicator_value(
         return GINI_2025_VALUES.get(region_name)
     if "Gibanje GINI Indeksa prenoč. 2025/2019" in indicator:
         return GINI_CHANGE_2025_2019.get(region_name)
+    if "Gibanje GINI Indeksa prenoč. 2025/2024" in indicator:
+        return GINI_CHANGE_2025_2024.get(region_name)
 
     if "Celotni prihodki v nastan. dejav. na prenočitev" in indicator:
         numerator = df["Prihodki reg.podjetij in s.p. v nastanitveni dejav. (I 55)"].astype(float).sum()
@@ -558,19 +561,19 @@ def compute_market_structure_for_subset(
     selected_year: int,
 ) -> pd.DataFrame:
     if subset.empty:
-        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm", "Vrednost"])
 
     base_weight_col = col_for_year("Prenočitve turistov SKUPAJ - 2024", selected_year)
     market_cols_year, market_labels_year = get_market_cols_for_year(df_source, selected_year)
     required_cols = [base_weight_col] + market_cols_year
     if any(column not in subset.columns for column in required_cols):
-        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm", "Vrednost"])
 
     total_weights = subset[base_weight_col].astype(float)
     total_weights_array = total_weights.to_numpy(dtype=float, copy=False)
     denominator = float(np.nansum(total_weights_array))
     if not np.isfinite(denominator) or denominator <= 0:
-        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm", "Vrednost"])
 
     rows: list[dict[str, Any]] = []
     for column, label in zip(market_cols_year, market_labels_year):
@@ -592,10 +595,11 @@ def compute_market_structure_for_subset(
 
     structure_df = pd.DataFrame(rows).dropna()
     if structure_df.empty:
-        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm"])
+        return pd.DataFrame(columns=["Trg", "Delež", "Delež_norm", "Vrednost"])
 
     total_share = float(structure_df["Delež"].sum())
     structure_df["Delež_norm"] = structure_df["Delež"] / total_share if total_share > 0 else np.nan
+    structure_df["Vrednost"] = structure_df["Delež_norm"] * denominator if total_share > 0 else np.nan
     return structure_df
 
 

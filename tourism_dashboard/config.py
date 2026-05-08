@@ -1,5 +1,5 @@
-APP_TITLE = "Upravljanje turističnih destinacij Slovenije"
-APP_KICKER = "Interaktivna aplikacija"
+APP_TITLE = "Tourism Destination COMPASS<span class='copyright'>©</span> - Upravljanje turističnih destinacij Slovenije"
+APP_KICKER = "Navigacijska platforma za podatkovno podprto odločanje turističnih destinacij in podjetij"
 APP_SUBTITLE = (
     "Ključni podatki in kazalniki stanja, stopnje razvoja, vpliva in "
     "učinkovitosti upravljanja turizma"
@@ -17,7 +17,7 @@ APP_DESCRIPTION = (
     "pomočjo umetne inteligence."
 )
 PAGE_TITLE = (
-    "Upravljanje turističnih destinacij Slovenije© \n "
+    "Tourism Destination COMPASS© \n "
     "Ključni podatki in kazalniki"
 )
 YEAR_NOTE_TEXT = (
@@ -157,6 +157,7 @@ AGG_RULES = {
     "Struktura nastanitvenih kapacitet - Stalna ležišča - Druge vrste kapacitet": ("sum", None),
     "Delež stalnih ležišč v Hotelih ipd.": ("wmean", "Nastanitvene kapacitete - stalna ležišča"),
     "Število vseh nastanitvenih obratov 2025": ("sum", None),
+    "Povprečno število sob na nastanitveni obrat 2025": ("wmean","Število vseh nastanitvenih obratov 2025"),
     "Nastanitvene kapacitete - Nedeljive enote 2025": ("sum", None),
     "Nastanitvene kapacitete - stalna ležišča 2025": ("sum", None),
     "Število sob (ned.enot) v kapacitetah višje kakovosti - ( 4* in 5*) 2025": ("sum", None),
@@ -207,7 +208,9 @@ AGG_RULES = {
     "Število vseh vrst podjetij na območju": ("sum", None),
     "Prihodek (v 1000 EUR) vseh podjetij na območju": ("sum", None),
     "Število reg. podjetij in s.p.  v Gostinstvu (I)": ("sum", None),
+    "Delež reg.podjetij in s.p. v gostinstvu (I) od vseh podjetij na območju": ("wmean", "Število vseh vrst podjetij na območju"),
     "Prihodki reg.podjetij in s.p. v Gostinstvu (I)": ("sum", None),
+    "Delež prihodkov reg.podjetij in s.p. v gostinstvu (I) v prihodkih vseh podjetij na območju": ("wmean", "Prihodek (v 1000 EUR) vseh podjetij na območju"),
     "Dodana vrednost reg.podjetij v Gostinstvu (I)": ("sum", None),
     "Dodana vrednost/zaposl. reg.podjetij Gostinstvu (I)": ("wmean", "Zaposleni v Gostinstvu (I) v registr.podjetjih in s.p."),
     "Ocenjeni stroški dela v reg. podj. v Gostinski (I) dejavnosti": ("sum", None),
@@ -247,6 +250,7 @@ AGG_RULES = {
     "Poraba el.energ. v kWh na realiz. 1000 EUR prihodka v Gostinstvu (I)": ("wmean", "Prihodki reg.podjetij in s.p. v Gostinstvu (I)"),
     "Število kmetijskih  gospodarstev": ("sum", None),
     "Ocena skupne ekonomske velikosti kmetij.gospodarstev": ("sum", None),
+    "Povprečna ekonomska velikost kmetijskih gospodarstev": ("wmean", "Število kmetijskih  gospodarstev"),
     "Skupaj neto prejeti dohodek povp. na prebivalca": ("wmean", "Število prebivalcev (H2/2024)"),
     "Neto prejeti dohodek iz dela, povp. na preb.": ("wmean", "Število prebivalcev (H2/2024)"),
     "Neto prejeti dohodek iz premoženja, kapitala, idr.povp. na preb.": ("wmean", "Število prebivalcev (H2/2024)"),
@@ -258,8 +262,10 @@ AGG_RULES = {
     "Indeks neto plača v Gostinstvu (I) /pvp. plača v vseh dejavnostih 2025": ("wmean", "Vsi delovno aktivni na območju 2025"),
     "Število izdanih gradbenih dovoljenj/1000 prebivalcev": ("wmean", "Število prebivalcev (H2/2024)"),
     "Število počitniških stanovanj": ("sum", None),
+    "Delež počitniških stanovanj od vseh stanovanj": ("wmean", "Število vseh stanovanj"),
     "Delež naseljenih stanovanj od vseh razp.": ("mean", None),
     "Komunalni odpadki, zbrani  z javnim odvozom (kg/prebivalca)": ("wmean", "Število prebivalcev (H2/2024)"),
+    "Indeks naravnega ambienta in neokrnjenosti narave (1-100)": ("wmean", "Površina območja (km2)"),
     "Štev.dijakov in študentov višjih strok. in visokošolsk.progr./1000 preb.": ("wmean", "Število prebivalcev (H2/2024)"),
     "Število vseh stanovanj": ("sum", None),
     "Delež naseljenih stanovanj": ("wmean", "Število vseh stanovanj"),
@@ -267,6 +273,7 @@ AGG_RULES = {
     "GINI Indeks - sezonskost prenočitev - 2025": ("wmean", "Prenočitve - povprečno število prenočitev na mesec"),
     "Gibanje GINI Indeksa prenoč. 2024/2019": ("wmean", "Prenočitve - povprečno število prenočitev na mesec"),
     "Gibanje GINI Indeksa prenoč. 2025/2019": ("wmean", "Prenočitve - povprečno število prenočitev na mesec"),
+    "Gibanje GINI Indeksa prenoč. 2025/2024": ("wmean", "Prenočitve - povprečno število prenočitev na mesec"),
     "Delež vseh prenočitev - Domači trg": ("wmean", "Prenočitve turistov SKUPAJ - 2024"),
     "Delež vseh prenočitev - DACH trgi (nemško govoreči trgi: D, A in CH)": ("wmean", "Prenočitve turistov SKUPAJ - 2024"),
     "Delež vseh prenočitev - Italijanski trg": ("wmean", "Prenočitve turistov SKUPAJ - 2024"),
@@ -359,6 +366,7 @@ INDIKATORJI_Z_INDEKSI = {
     "GINI Indeks - sezonskost prenočitev - 2025",
     "Gibanje GINI Indeksa prenoč. 2025/2019",
     "Gibanje GINI Indeksa prenoč. 2024/2019",
+    "Gibanje GINI Indeksa prenoč. 2025/2024",
     "Pritisk turizma na družbeni prostor (število stalnih ležišč / 100 prebivalcev)",
     "Pritisk turizma na družbeni prostor (število stalnih ležišč / 100 prebivalcev) 2025",
     "Gostota turizma",
@@ -386,6 +394,7 @@ INDIKATORJI_Z_INDEKSI = {
     "Povprečna mesečna neto  plača/zaposl. osebo (EUR) 2025",
     "Povprečna neto plača izplačana na zaposl. osebo v Gostinstvu (I)",
     "Povprečna neto plača izplačana na zaposl. osebo v Gostinstvu (I) 2025",
+    "Indeks naravnega ambienta in neokrnjenosti narave (1-100)",
 }
 
 INDIKATORJI_Z_OPOMBO = {
@@ -397,7 +406,9 @@ INDIKATORJI_Z_OPOMBO = {
     "Število vseh vrst podjetij na območju",
     "Prihodek (v 1000 EUR) vseh podjetij na območju",
     "Število reg. podjetij in s.p.  v Gostinstvu (I)",
+    "Delež reg.podjetij in s.p. v gostinstvu (I) od vseh podjetij na območju",
     "Prihodki reg.podjetij in s.p. v Gostinstvu (I)",
+    "Delež prihodkov reg.podjetij in s.p. v gostinstvu (I) v prihodkih vseh podjetij na območju",
     "Dodana vrednost reg.podjetij v Gostinstvu (I)",
     "Dodana vrednost/zaposl. reg.podjetij Gostinstvu (I)",
     "Ocenjeni stroški dela v reg. podj. v Gostinski (I) dejavnosti",
@@ -433,6 +444,8 @@ INDIKATORJI_Z_OPOMBO = {
     "Ocenjeni prihodki iz nastan. dej. na razpoložljivo sobo (enoto)",
     "Ocenjeni prihodki iz nast.dej. na prodano sobo (ned.enoto)",
     "Poraba el.energ. v kWh na realiz. 1000 EUR prihodka v Gostinstvu (I)",
+    "Ocena skupne ekonomske velikosti kmetij.gospodarstev",
+    "Povprečna ekonomska velikost kmetijskih gospodarstev",
 }
 
 INDIKATORJI_Z_VALUTO = {
@@ -466,6 +479,7 @@ INDIKATORJI_Z_VALUTO = {
     "Neto prejeti dohodek iz premoženja, kapitala, idr.povp. na preb.",
     "Povprečna mesečna neto  plača/zaposl. osebo (EUR)",
     "Povprečna mesečna neto  plača/zaposl. osebo (EUR) 2025",
+    "Povprečna ekonomska velikost kmetijskih gospodarstev",
 }
 
 LOWER_IS_BETTER_INDICATORS = {
@@ -481,6 +495,7 @@ LOWER_IS_BETTER_INDICATORS = {
     "GINI Indeks - sezonskost prenočitev - 2025",
     "Gibanje GINI Indeksa prenoč. 2025/2019",
     "Gibanje GINI Indeksa prenoč. 2024/2019",
+    "Gibanje GINI Indeksa prenoč. 2025/2024",
     "Poraba el.energ. v kWh na realiz. 1000 EUR prihodka v Gostinstvu (I)",
     "Poraba el.energije (MWh) Dejavnost Gostinstvo (I) 2025",
     "Delež stroškov dela v prihodkih v reg. podj. v Gostinstvu (I)",
@@ -488,6 +503,7 @@ LOWER_IS_BETTER_INDICATORS = {
     "Delež stroškov dela v prihodkih v reg. podj. v nast.gost.dej. (I 55)",
     "Delež stroškov dela v dod vredn. v reg. podj. v nast.gost.dej. (I 55)",
     "Število počitniških stanovanj",
+    "Delež počitniških stanovanj od vseh stanovanj",
 }
 
 SKUPNO_OPOZORILO_AGREGACIJA = {
@@ -704,4 +720,65 @@ GINI_CHANGE_2025_2019 = {
     "Mediteranska Slovenija": 103.9,
     "Osrednja Slovenija in Ljubljana": 104.3,
     "Termalna panonska Slovenija": 115.9,
+}
+
+GINI_CHANGE_2025_2024 = {
+    "Slovenska Istra": 98.40528939267101,
+    "Julijske Alpe": 100.32705334612939,
+    "Predalpska Slovenija (vzh.Gorenjska)": 107.72329530783942,
+    "Goriško, Vipava, Kras": 105.75711036344985,
+    "Savinjsko, Celje, Obsotelje in Kozjansko": 101.68890528544969,
+    "Dolenjska, Bela Krajina in Kočevsko": 99.69558971140607,
+    "Ljubljana in osrednja Slovenija": 103.64008863323959,
+    "Štajerska (Maribor, Pohorje, Ptuj)": 100.4391946530955,
+    "Zgornje Savinjska, Šaleška in Koroška": 101.53147529393904,
+    "Pomurje": 105.19107325339706,
+    "Posavje": 108.88292081867444,
+    "Ankaran": 99.78024171767855,
+    "Bela Krajina": 97.45741623016539,
+    "Bled": 99.9113843132031,
+    "Bohinj": 101.40070968503072,
+    "Brda": 96.4202774668557,
+    "Celje": 81.51068008680062,
+    "Cerklje": 106.03372928365916,
+    "Cerkno": 92.73069944535374,
+    "Čatež in Posavje": 108.88292081867444,
+    "Dobrna": 111.38399032142266,
+    "Dolenjska ": 112.78737702651951,
+    "Dolina Soče": 97.74303617946222,
+    "Idrija": 119.68970636008886,
+    "Izola": 100.60477207202541,
+    "Kamnik": 113.51959625730873,
+    "Kočevsko": 99.28987498511196,
+    "Koper": 102.84456895633085,
+    "Koroška": 95.30177669464264,
+    "Kranj": 112.72194918633946,
+    "Kranjska Gora": 95.26834752748657,
+    "Kras": 108.24204167491267,
+    "Laško": 102.13324790085755,
+    "Ljubljana": 102.991853743426,
+    "Maribor - Pohorje": 106.65911166339681,
+    "Nova Gorica in Vipavska dolina": 111.89810961727898,
+    "Podčetrtek": 113.83715796597056,
+    "Portorož - Piran": 96.22506800014686,
+    "Ptuj": 114.19758369571875,
+    "Radovljica": 99.29810761616537,
+    "Rogaška Slatina": 90.95248121537824,
+    "Rogla-Pohorje": 94.86021409340995,
+    "Škofja Loka": 104.26105786106534,
+    "Velenje - Topolšica": 97.72831241079774,
+    "Zeleni Kras": 104.12725723073504,
+    "Zgornja Savinjska dolina": 97.1035728735998,
+    "Zasavje": 106.54179444012762,
+    "Dežela pod Karavankami": 97.49461750317427,
+    "Dežela pod Storžičem-Jezersko": 98.05024963264874,
+    "Dežela suhe robe": 93.37216339723749,
+    "Haloze": 101.46304069909391,
+    "Jeruzalem - Ormož": 105.40608884168321,
+    "Dolina Voglajne": 115.60039442118718,
+    "Spodnja Savinjska Dolina": 102.35010036211601,
+    "Alpska Slovenija": 100.56789564771225,
+    "Mediteranska Slovenija": 99.50513969954456,
+    "Osrednja Slovenija in Ljubljana": 102.808720884075,
+    "Termalna panonska Slovenija": 109.67927758713454,
 }
