@@ -41,6 +41,7 @@ from tourism_dashboard.assets import (
 )
 from tourism_dashboard.config import (
     AGG_RULES,
+    GROUP_CHART_COLOR_SCALES,
     GROUP_COLOR_EMOJI,
     INDIKATORJI_Z_INDEKSI,
     INDIKATORJI_Z_OPOMBO,
@@ -48,6 +49,13 @@ from tourism_dashboard.config import (
     MARKET_COLOR_MAP,
     MARKET_PREFIX,
     SKUPNO_OPOZORILO_AGREGACIJA,
+)
+from tourism_dashboard.compass import (
+    aggregate_compass_results,
+    build_compass_area_maps,
+    format_compass_metric_label,
+    get_compass_index_path,
+    load_compass_workbook,
 )
 from tourism_dashboard.formatting import (
     ColumnWidth,
@@ -3429,6 +3437,320 @@ def render_national_business_indicators() -> None:
     with detail_tab:
         render_section_heading("Podrobna tabela kazalnikov")
         render_national_all_indicators_table(sector_df, selected_sector)
+
+
+def render_compass_destination_index(ctx: DashboardContext, logo_path: Any | None = None) -> None:
+    frames = load_compass_workbook()
+    if not frames:
+        st.info(
+            "Podatkov za razvojni indeks turističnih destinacij nisem našel. "
+            f"Pričakovana datoteka: `{get_compass_index_path()}`."
+        )
+        return
+
+    required_sheets = {
+        "compass_area_levels",
+        "compass_index_groups",
+        "compass_metrics",
+        "compass_area_mapping",
+        "compass_values_long",
+        "compass_aggregation_rules",
+        "compass_weight_rules",
+        "compass_metric_components",
+    }
+    missing_sheets = sorted(sheet for sheet in required_sheets if sheet not in frames or frames[sheet].empty)
+    if missing_sheets:
+        st.warning("COMPASS Excel nima vseh potrebnih listov: " + ", ".join(missing_sheets))
+        return
+
+    metrics = frames["compass_metrics"].copy()
+    values = frames["compass_values_long"].copy()
+    area_levels = frames["compass_area_levels"].sort_values("display_order").copy()
+    index_groups = frames["compass_index_groups"].sort_values("display_order").copy()
+
+    if logo_path is not None and getattr(logo_path, "exists", lambda: False)():
+        st.image(str(logo_path), width=360)
+
+    st.subheader("Razvojni indeks turističnih destinacij - Tourism Destination COMPASS INDEX")
+
+    content_tab, explanation_tab = st.tabs(
+        [
+            "Prikaz indeksa",
+            "Obrazložitev izračuna indeksa in uvrščanja destinacij",
+        ]
+    )
+
+    with content_tab:
+
+        available_years = sorted(int(year) for year in values["index_year"].dropna().unique().tolist())
+        year_col, area_col, group_col = st.columns([0.8, 1.4, 2.2], gap="large")
+        with year_col:
+            selected_year = st.selectbox(
+                "Leto indeksa",
+                available_years,
+                index=len(available_years) - 1 if available_years else 0,
+                key="compass_index_year",
+            )
+        with area_col:
+            area_options = area_levels["area_level"].dropna().astype(str).tolist()
+            selected_area_level = st.selectbox(
+                "Raven območja",
+                area_options,
+                index=0,
+                key="compass_area_level",
+            )
+        with group_col:
+            group_options = index_groups["ui_filter_label"].dropna().astype(str).tolist()
+            selected_group_label = st.selectbox(
+                "Področje razvojnega indeksa - Tourism Destination COMPASS INDEX",
+                group_options,
+                index=0,
+                key="compass_index_group",
+            )
+
+        selected_group = index_groups[index_groups["ui_filter_label"] == selected_group_label].iloc[0]
+        selected_metric_id = str(selected_group["total_metric_id"])
+        selected_index_group_name = str(selected_group["index_group_name"])
+        chart_color_scale = GROUP_CHART_COLOR_SCALES.get(
+            selected_index_group_name,
+            GROUP_CHART_COLOR_SCALES["Krovni Index"],
+        )
+        metric_row_df = metrics[metrics["metric_id"] == selected_metric_id]
+        if metric_row_df.empty:
+            st.warning(f"V `compass_metrics` ni metrike `{selected_metric_id}`.")
+            return
+        metric_row = metric_row_df.iloc[0]
+
+        metric_values = values[
+            (values["metric_id"] == selected_metric_id)
+            & (values["index_year"] == selected_year)
+        ]
+        if metric_values.empty:
+            source_year = int(selected_year)
+            reference_year = int(selected_year)
+        else:
+            source_year = int(metric_values.iloc[0]["source_year"])
+            reference_year = int(metric_values.iloc[0]["reference_year"])
+        metric_label = format_compass_metric_label(
+            metric_row,
+            source_year=source_year,
+            reference_year=reference_year,
+        )
+
+        result_df = aggregate_compass_results(
+            frames=frames,
+            main_df=ctx.numeric_df,
+            area_level=selected_area_level,
+            metric_id=selected_metric_id,
+            index_year=int(selected_year),
+        )
+        if result_df.empty:
+            st.info("Za izbrano raven in indeks ni podatkov.")
+            return
+        slovenia_result_df = aggregate_compass_results(
+            frames=frames,
+            main_df=ctx.numeric_df,
+            area_level="Slovenija",
+            metric_id=selected_metric_id,
+            index_year=int(selected_year),
+        )
+        slovenia_index_value = (
+            float(slovenia_result_df.iloc[0]["value"])
+            if not slovenia_result_df.empty and pd.notna(slovenia_result_df.iloc[0]["value"])
+            else np.nan
+        )
+
+        kpi_cols = st.columns(3)
+        with kpi_cols[0]:
+            st.metric("Število območij", format_si_number(len(result_df), 0))
+        with kpi_cols[1]:
+            st.metric("Najvišja vrednost", format_si_number(float(result_df["value"].max()), 1))
+        with kpi_cols[2]:
+            st.metric("Povprečje", format_si_number(float(result_df["value"].mean()), 1))
+
+        map_col, table_col = st.columns([1.55, 1.0], gap="large")
+        with map_col:
+            st.subheader("Geografski prikaz")
+            display_geojson_obj = _get_display_geojson(ctx)
+            if display_geojson_obj is None or ctx.geojson_name_prop is None:
+                st.info("Za zemljevid naloži občinski GeoJSON oziroma uporabi privzeti `si_display.json`.")
+            else:
+                municipalities, municipality_to_value, municipality_to_area, area_to_value = build_compass_area_maps(
+                    frames,
+                    selected_area_level,
+                    result_df,
+                )
+                if selected_area_level in {"Občine", "Slovenija"}:
+                    st.caption(
+                        "Prikazane so občine. Pri Sloveniji imajo vse občine enako nacionalno vrednost indeksa."
+                    )
+                    render_map_municipalities(
+                        display_geojson_obj,
+                        ctx.geojson_name_prop,
+                        municipalities,
+                        municipality_to_value,
+                        indicator_label=selected_group_label,
+                        height=700,
+                        color_scale=chart_color_scale,
+                        raw_indicator_label=True,
+                        cache_key=cache_key_for_municipalities_map(
+                            data_signature=ctx.data_signature,
+                            geojson_signature=ctx.geojson_signature,
+                            group_col=f"compass:{selected_area_level}",
+                            selected_region="__all__",
+                            indicator_label=f"{selected_metric_id}:{selected_year}:raw_tooltip",
+                        ),
+                    )
+                else:
+                    st.caption(
+                        "Prikazana so združena območja iz občinskih geometrij; meje sledijo izbrani ravni območja."
+                    )
+                    regions_geojson = _get_regions_geojson(
+                        ctx=ctx,
+                        municipality_to_region=municipality_to_area,
+                        group_col=selected_area_level,
+                    )
+                    if regions_geojson is None:
+                        st.warning(
+                            "Ne uspem sestaviti združenih poligonov za izbrano raven. "
+                            "Prikazujem občine obarvane po vrednosti območja."
+                        )
+                        render_map_municipalities(
+                            display_geojson_obj,
+                            ctx.geojson_name_prop,
+                            municipalities,
+                            municipality_to_value,
+                            indicator_label=selected_group_label,
+                            height=700,
+                            color_scale=chart_color_scale,
+                            raw_indicator_label=True,
+                            cache_key=cache_key_for_municipalities_map(
+                                data_signature=ctx.data_signature,
+                                geojson_signature=ctx.geojson_signature,
+                                group_col=f"compass:{selected_area_level}",
+                                selected_region="__fallback__",
+                                indicator_label=f"{selected_metric_id}:{selected_year}:raw_tooltip",
+                            ),
+                        )
+                    else:
+                        render_map_regions(
+                            regions_geojson,
+                            area_to_value,
+                            indicator_label=selected_group_label,
+                            group_col=selected_area_level,
+                            height=700,
+                            color_scale=chart_color_scale,
+                            raw_indicator_label=True,
+                            cache_key=cache_key_for_regions_map(
+                                data_signature=ctx.data_signature,
+                                geojson_signature=ctx.geojson_signature,
+                                group_col=f"compass:{selected_area_level}",
+                                indicator_label=f"{selected_metric_id}:{selected_year}:raw_tooltip",
+                            ),
+                        )
+
+        with table_col:
+            st.subheader("Tabela z uvrstitvijo")
+            table_df = result_df[["rank", "area_name", "value", "municipality_count"]].copy()
+            table_df = table_df.rename(
+                columns={
+                    "rank": "Rang",
+                    "area_name": "Območje",
+                    "value": "Vrednost indeksa",
+                    "municipality_count": "Št. občin",
+                }
+            )
+            table_df["Vrednost indeksa"] = table_df["Vrednost indeksa"].apply(lambda value: format_si_number(value, 1))
+            st.dataframe(
+                table_df,
+                width="stretch",
+                height=700,
+                hide_index=True,
+                column_config=make_localized_column_config(
+                    table_df,
+                    width_overrides={"Območje": "large", "Vrednost indeksa": "medium"},
+                ),
+            )
+
+        st.subheader("Graf uvrstitve")
+        chart_limit = len(result_df)
+        if len(result_df) > 40:
+            chart_limit = st.slider(
+                "Število prikazanih območij v grafu",
+                min_value=10,
+                max_value=min(80, len(result_df)),
+                value=min(40, len(result_df)),
+                step=5,
+                key=f"compass_chart_limit_{selected_area_level}_{selected_metric_id}_{selected_year}",
+            )
+        chart_df = result_df.head(chart_limit).copy()
+        chart_df["label"] = chart_df["rank"].astype(str) + ". " + chart_df["area_name"].astype(str)
+        chart_df["value_label"] = chart_df["value"].apply(lambda value: format_si_number(value, 1))
+        chart_df["hover_label"] = chart_df.apply(
+            lambda row: (
+                f"<b>Rang in območje:</b> {row['label']}<br>"
+                f"<b>Vrednost indeksa:</b> {row['value_label']}"
+            ),
+            axis=1,
+        )
+        chart_df = chart_df.sort_values("rank", ascending=False)
+        fig = px.bar(
+            chart_df,
+            x="value",
+            y="label",
+            orientation="h",
+            text="value_label",
+            labels={"value": "Vrednost indeksa", "label": "Rang in območje"},
+            color="value",
+            color_continuous_scale=chart_color_scale,
+            custom_data=["hover_label"],
+        )
+        fig.update_traces(
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="%{customdata[0]}<extra></extra>",
+        )
+        if pd.notna(slovenia_index_value):
+            slovenia_label = f"Slovenija: {format_si_number(slovenia_index_value, 1)}"
+            fig.add_vline(
+                x=slovenia_index_value,
+                line_color="#111827",
+                line_width=2,
+                line_dash="dash",
+            )
+            fig.add_annotation(
+                x=slovenia_index_value,
+                y=1.04,
+                xref="x",
+                yref="paper",
+                text=slovenia_label,
+                showarrow=False,
+                xanchor="center",
+                yanchor="bottom",
+                font=dict(color="#111827", size=13),
+                bgcolor="rgba(255,255,255,0.94)",
+                bordercolor="#111827",
+                borderwidth=1,
+                borderpad=4,
+            )
+        fig.update_layout(
+            title=f"{selected_group_label} - {selected_area_level}",
+            height=max(420, min(1100, 32 * len(chart_df) + 140)),
+            margin=dict(l=20, r=70, t=95, b=30),
+            coloraxis_showscale=False,
+            yaxis_title=None,
+        )
+        st.plotly_chart(fig, width="stretch")
+
+    with explanation_tab:
+        explanation_df = frames.get("compass_explanation", pd.DataFrame())
+        if explanation_df.empty:
+            st.info("Besedilo obrazložitve je še v izdelavi.")
+        else:
+            for row in explanation_df.sort_values("display_order").itertuples(index=False):
+                st.markdown(f"### {getattr(row, 'title')}")
+                body = str(getattr(row, "body") or "").strip()
+                st.write(body if body else "Besedilo je še v izdelavi.")
 
 
 def render_accommodation_capacity_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:

@@ -25,10 +25,13 @@ if str(PROJECT_ROOT) not in sys.path:
 from tourism_dashboard.config import (  # noqa: E402
     DASHBOARD_DB_CONNECTION_NAME_DEFAULT,
     DASHBOARD_DB_SCHEMA_VERSION,
+    DASHBOARD_COMPASS_FRAME_PREFIX,
     DASHBOARD_MAIN_FRAME_KEY,
     DASHBOARD_MAPPING_FRAME_KEY,
     DASHBOARD_MARKET_GROWTH_FRAME_KEY,
     DASHBOARD_NATIONAL_KPI_FRAME_KEY,
+    COMPASS_INDEX_SHEETS,
+    COMPASS_INDEX_XLSX_FILENAME,
     DATA_XLSX_FILENAME,
     MAPPING_XLSX_FILENAME,
     NATIONAL_KPI_SHEET_NAME,
@@ -161,6 +164,10 @@ def build_frames() -> list[FrameSpec]:
         DATA_DIR / NATIONAL_KPI_XLSX_FILENAME,
         BASE_DIR / NATIONAL_KPI_XLSX_FILENAME,
     )
+    compass_index_path = first_existing(
+        DATA_DIR / COMPASS_INDEX_XLSX_FILENAME,
+        BASE_DIR / COMPASS_INDEX_XLSX_FILENAME,
+    )
 
     frames = [
         FrameSpec(
@@ -197,6 +204,19 @@ def build_frames() -> list[FrameSpec]:
                 frame_kind="kpi_long",
             )
         )
+
+    if compass_index_path.exists():
+        for sheet_name in COMPASS_INDEX_SHEETS:
+            frames.append(
+                FrameSpec(
+                    frame_key=f"{DASHBOARD_COMPASS_FRAME_PREFIX}:{sheet_name}",
+                    df=pd.read_excel(compass_index_path, sheet_name=sheet_name),
+                    source_filename=compass_index_path.name,
+                    sheet_name=sheet_name,
+                    frame_type="compass",
+                    frame_kind=sheet_name,
+                )
+            )
 
     monthly_sources = [
         ("overnights", find_market_overnight_seasonality_files, load_market_overnight_seasonality_workbook),

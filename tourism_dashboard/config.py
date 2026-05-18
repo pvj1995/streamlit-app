@@ -42,12 +42,29 @@ TITLE_FALLBACK_FILENAME = "Title.jpg"
 AI_ICON_FILENAME = "AI image.png"
 AI_BANNER_FILENAME = "Banner AI analizy.jpg"
 FOOTER_LOGO_FILENAME = "footer_logo.jpg"
+COMPASS_INDEX_LOGO_FILENAME = "Tourism compass index.png"
 
 GROUP_COLOR_EMOJI = {
     "Družbeni kazalniki": "🟦",
     "Okoljski kazalniki": "🟩",
     "Ekonomski nastanitveni in tržni turistični kazalniki": "🟥",
     "Ekonomsko poslovni kazalniki turistične dejavnosti": "🟪",
+}
+
+GROUP_CHART_COLORS = {
+    "Krovni Index": "#2563eb",
+    "Družbeni kazalniki": "#2563eb",
+    "Okoljski kazalniki": "#16a34a",
+    "Ekonomski nastanitveni in tržni turistični kazalniki": "#dc2626",
+    "Ekonomsko poslovni kazalniki turistične dejavnosti": "#7c3aed",
+}
+
+GROUP_CHART_COLOR_SCALES = {
+    "Krovni Index": ["#dbeafe", "#93c5fd", "#2563eb", "#1e40af"],
+    "Družbeni kazalniki": ["#dbeafe", "#93c5fd", "#2563eb", "#1e40af"],
+    "Okoljski kazalniki": ["#dcfce7", "#86efac", "#16a34a", "#166534"],
+    "Ekonomski nastanitveni in tržni turistični kazalniki": ["#fee2e2", "#fca5a5", "#dc2626", "#991b1b"],
+    "Ekonomsko poslovni kazalniki turistične dejavnosti": ["#ede9fe", "#c4b5fd", "#7c3aed", "#5b21b6"],
 }
 
 GROUP_BUTTON_IMAGE_FILES = {
@@ -84,8 +101,21 @@ DASHBOARD_MAIN_FRAME_KEY = "main:skupna_tabela"
 DASHBOARD_MARKET_GROWTH_FRAME_KEY = "main:rast_prenocitev_po_trgih"
 DASHBOARD_MAPPING_FRAME_KEY = "mapping:indicator_groups"
 DASHBOARD_NATIONAL_KPI_FRAME_KEY = "national:kpi_long"
+DASHBOARD_COMPASS_FRAME_PREFIX = "compass"
 NATIONAL_KPI_XLSX_FILENAME = "Ključni razvojni in poslovni kazalniki - nacionalna raven - formated.xlsx"
 NATIONAL_KPI_SHEET_NAME = "KPI_long"
+COMPASS_INDEX_XLSX_FILENAME = "Razvojni indeks turističnih destinacij.xlsx"
+COMPASS_INDEX_SHEETS = [
+    "compass_area_levels",
+    "compass_index_groups",
+    "compass_metrics",
+    "compass_metric_components",
+    "compass_area_mapping",
+    "compass_values_long",
+    "compass_aggregation_rules",
+    "compass_weight_rules",
+    "compass_explanation",
+]
 
 MARKET_PREFIX = "Delež vseh prenočitev - "
 MARKET_COLOR_MAP = {

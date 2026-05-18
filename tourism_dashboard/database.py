@@ -14,6 +14,7 @@ from tourism_dashboard.config import (
     DASHBOARD_MAPPING_FRAME_KEY,
     DASHBOARD_MARKET_GROWTH_FRAME_KEY,
     DASHBOARD_NATIONAL_KPI_FRAME_KEY,
+    DASHBOARD_COMPASS_FRAME_PREFIX,
     DATA_BACKEND_DEFAULT,
 )
 
@@ -267,6 +268,13 @@ def load_indicator_groups_from_db() -> dict[str, list[str]]:
 
 def load_national_kpi_dataframe_from_db() -> pd.DataFrame:
     return load_dashboard_frame(get_dashboard_connection_name(), DASHBOARD_NATIONAL_KPI_FRAME_KEY)
+
+
+def load_compass_dataframe_from_db(sheet_name: str) -> pd.DataFrame:
+    return load_dashboard_frame(
+        get_dashboard_connection_name(),
+        f"{DASHBOARD_COMPASS_FRAME_PREFIX}:{sheet_name}",
+    )
 
 
 @st.cache_data(show_spinner=False, ttl=DASHBOARD_DB_CACHE_TTL_SECONDS)

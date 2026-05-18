@@ -8,6 +8,7 @@ import streamlit as st
 from tourism_dashboard.auth import require_password
 from tourism_dashboard.assets import render_page_header
 from tourism_dashboard.config import (
+    COMPASS_INDEX_LOGO_FILENAME,
     DATA_XLSX_FILENAME,
     DISPLAY_GEOJSON_FILENAME,
     FOOTER_AUTHOR_TEXT,
@@ -43,6 +44,7 @@ from tourism_dashboard.models import DashboardContext
 from tourism_dashboard.paths import BASE_DIR, DATA_DIR, LOGOS_DIR, first_existing
 from tourism_dashboard.ui import (
     render_accommodation_capacity_structure,
+    render_compass_destination_index,
     render_market_structure,
     render_national_business_indicators,
     render_view,
@@ -288,12 +290,22 @@ ctx = DashboardContext(
     dashboard_mode=dashboard_mode,
 )
 
-tab_kazalniki, tab_trgi, tab_kapacitete, tab_nacionalni_kpi = st.tabs(
+footer_logo_path = first_existing(
+    LOGOS_DIR / FOOTER_LOGO_FILENAME,
+    BASE_DIR / FOOTER_LOGO_FILENAME,
+)
+compass_index_logo_path = first_existing(
+    LOGOS_DIR / COMPASS_INDEX_LOGO_FILENAME,
+    BASE_DIR / COMPASS_INDEX_LOGO_FILENAME,
+)
+
+tab_kazalniki, tab_trgi, tab_kapacitete, tab_nacionalni_kpi, tab_compass_index = st.tabs(
     [
         "Kazalniki",
         "Turistični promet in sezonskost po trgih",
         "Nastanitvene kapacitete in struktura kapacitet",
         "Ključni razvojni in poslovni kazalniki - nacionalna raven",
+        "Razvojni indeks turističnih destinacij – Tourism Destination COMPASS INDEX",
     ]
 )
 
@@ -324,10 +336,8 @@ with tab_kapacitete:
 with tab_nacionalni_kpi:
     render_national_business_indicators()
 
-footer_logo_path = first_existing(
-    LOGOS_DIR / FOOTER_LOGO_FILENAME,
-    BASE_DIR / FOOTER_LOGO_FILENAME,
-)
+with tab_compass_index:
+    render_compass_destination_index(ctx, compass_index_logo_path)
 
 st.markdown("---")
 
