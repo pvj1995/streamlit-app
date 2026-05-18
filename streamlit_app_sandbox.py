@@ -47,6 +47,7 @@ from tourism_dashboard.ui import (
     render_compass_destination_index,
     render_market_structure,
     render_national_business_indicators,
+    render_news_and_articles,
     render_view,
 )
 
@@ -203,7 +204,41 @@ require_password()
 render_page_header()
 
 st.markdown("<hr style='margin-top:20px;margin-bottom:20px;'>", unsafe_allow_html=True)
-st.markdown(YEAR_NOTE_TEXT)
+st.markdown(
+    """
+    <style>
+    div[data-testid="stButton"] > button[kind="primary"] {
+        color: #ffffff;
+        font-weight: 800;
+        line-height: 1.2;
+        padding: 12px 16px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #0f172a 0%, #2563eb 52%, #16a34a 100%);
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
+        border: 1px solid rgba(255, 255, 255, 0.32);
+    }
+    div[data-testid="stButton"] > button[kind="primary"]:hover {
+        filter: brightness(1.06);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+year_note_col, news_link_col = st.columns([0.72, 0.28], vertical_alignment="center")
+with year_note_col:
+    st.markdown(YEAR_NOTE_TEXT)
+with news_link_col:
+    if st.button("Novice in strokovni članki", type="primary", use_container_width=True):
+        st.query_params["section"] = "news"
+        st.rerun()
+
+active_section = st.query_params.get("section")
+if active_section == "news":
+    if st.button("Nazaj na podatke in kazalnike"):
+        st.query_params.clear()
+        st.rerun()
+    render_news_and_articles()
+    st.stop()
 
 with st.sidebar:
     st.header("Nastavitve")
@@ -299,13 +334,21 @@ compass_index_logo_path = first_existing(
     BASE_DIR / COMPASS_INDEX_LOGO_FILENAME,
 )
 
-tab_kazalniki, tab_trgi, tab_kapacitete, tab_nacionalni_kpi, tab_compass_index = st.tabs(
+(
+    tab_kazalniki,
+    tab_trgi,
+    tab_kapacitete,
+    tab_nacionalni_kpi,
+    tab_compass_index,
+    tab_eu27_kpi,
+) = st.tabs(
     [
         "Kazalniki",
         "Turistični promet in sezonskost po trgih",
         "Nastanitvene kapacitete in struktura kapacitet",
         "Ključni razvojni in poslovni kazalniki - nacionalna raven",
         "Razvojni indeks turističnih destinacij – Tourism Destination COMPASS INDEX",
+        "Ključni kazalniki uspešnosti razvoja turizma na ravni EU-27",
     ]
 )
 
@@ -338,6 +381,10 @@ with tab_nacionalni_kpi:
 
 with tab_compass_index:
     render_compass_destination_index(ctx, compass_index_logo_path)
+
+with tab_eu27_kpi:
+    st.subheader("Ključni kazalniki uspešnosti razvoja turizma na ravni EU-27")
+    st.info("V izdelavi")
 
 st.markdown("---")
 

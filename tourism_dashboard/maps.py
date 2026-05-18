@@ -131,13 +131,22 @@ def build_simplified_municipality_geojson(
         return geojson_obj
 
 
-def palette(value: float | None, vmin: float, vmax: float, colors: list[str] | None = None) -> str:
+def palette(
+    value: float | None,
+    vmin: float,
+    vmax: float,
+    colors: list[str] | None = None,
+    *,
+    reverse: bool = False,
+) -> str:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return "#cccccc"
     colors = colors or ["#deebf7", "#9ecae1", "#6baed6", "#3182bd", "#08519c"]
     if vmax == vmin:
         return colors[len(colors) // 2]
     quantile = (value - vmin) / (vmax - vmin)
+    if reverse:
+        quantile = 1 - quantile
     bins = np.linspace(0, 1, len(colors) + 1)[1:-1]
     return colors[sum(quantile > bound for bound in bins)]
 
@@ -161,12 +170,14 @@ def cache_key_for_regions_map(
     geojson_signature: str | None,
     group_col: str,
     indicator_label: str,
+    color_direction: str = "normal",
 ) -> str:
     return "regions:" + _cache_key_digest(
         data_signature,
         geojson_signature or "no_geojson",
         group_col,
         indicator_label,
+        color_direction,
     )
 
 
@@ -177,6 +188,7 @@ def cache_key_for_municipalities_map(
     group_col: str,
     selected_region: str,
     indicator_label: str,
+    color_direction: str = "normal",
 ) -> str:
     return "municipalities:" + _cache_key_digest(
         data_signature,
@@ -184,6 +196,7 @@ def cache_key_for_municipalities_map(
         group_col,
         selected_region,
         indicator_label,
+        color_direction,
     )
 
 
@@ -194,6 +207,7 @@ def build_regions_map_html(
     group_col: str,
     color_scale: list[str] | None = None,
     raw_indicator_label: bool = False,
+    reverse_color_scale: bool = False,
 ) -> str | None:
     if folium is None or regions_geojson is None:
         return None
@@ -232,7 +246,7 @@ def build_regions_map_html(
         region_name = feature.get("properties", {}).get(group_col)
         value = region_to_value.get(region_name, np.nan)
         return {
-            "fillColor": palette(value, vmin, vmax, color_scale),
+            "fillColor": palette(value, vmin, vmax, color_scale, reverse=reverse_color_scale),
             "color": "#111111",
             "weight": 2.2,
             "fillOpacity": 0.70,
@@ -263,6 +277,7 @@ def render_map_regions(
     cache_key: str | None = None,
     color_scale: list[str] | None = None,
     raw_indicator_label: bool = False,
+    reverse_color_scale: bool = False,
 ) -> None:
     def build_html() -> str | None:
         return build_regions_map_html(
@@ -272,6 +287,7 @@ def render_map_regions(
             group_col=group_col,
             color_scale=color_scale,
             raw_indicator_label=raw_indicator_label,
+            reverse_color_scale=reverse_color_scale,
         )
 
     _render_cached_map(cache_key=cache_key, height=height, build_html=build_html)
@@ -285,6 +301,7 @@ def build_municipalities_map_html(
     indicator_label: str = "Vrednost",
     color_scale: list[str] | None = None,
     raw_indicator_label: bool = False,
+    reverse_color_scale: bool = False,
 ) -> str | None:
     if folium is None or geojson_obj is None:
         return None
@@ -350,7 +367,7 @@ def build_municipalities_map_html(
         municipality_name = normalize_name(feature.get("properties", {}).get(name_prop, ""))
         value = municipality_to_value.get(municipality_name, np.nan)
         return {
-            "fillColor": palette(value, vmin, vmax, color_scale),
+            "fillColor": palette(value, vmin, vmax, color_scale, reverse=reverse_color_scale),
             "color": "#111111",
             "weight": 0.9,
             "fillOpacity": 0.75,
@@ -401,6 +418,7 @@ def render_map_municipalities(
     cache_key: str | None = None,
     color_scale: list[str] | None = None,
     raw_indicator_label: bool = False,
+    reverse_color_scale: bool = False,
 ) -> None:
     def build_html() -> str | None:
         return build_municipalities_map_html(
@@ -411,6 +429,7 @@ def render_map_municipalities(
             indicator_label=indicator_label,
             color_scale=color_scale,
             raw_indicator_label=raw_indicator_label,
+            reverse_color_scale=reverse_color_scale,
         )
 
     _render_cached_map(cache_key=cache_key, height=height, build_html=build_html)

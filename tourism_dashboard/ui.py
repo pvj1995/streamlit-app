@@ -45,7 +45,6 @@ from tourism_dashboard.config import (
     GROUP_COLOR_EMOJI,
     INDIKATORJI_Z_INDEKSI,
     INDIKATORJI_Z_OPOMBO,
-    LOWER_IS_BETTER_INDICATORS,
     MARKET_COLOR_MAP,
     MARKET_PREFIX,
     SKUPNO_OPOZORILO_AGREGACIJA,
@@ -63,6 +62,7 @@ from tourism_dashboard.formatting import (
     format_indicator_value_tables,
     format_pct,
     format_si_number,
+    is_lower_better,
     is_rate_like,
     is_percent_like,
     make_localized_column_config,
@@ -200,7 +200,7 @@ def build_slovenia_metric_delta(indicator: str, region_value: float, slovenia_va
     if slovenia_value is None or pd.isna(slovenia_value):
         return "V primerjavi s Slovenijo: —"
 
-    lower_is_better = indicator in LOWER_IS_BETTER_INDICATORS
+    lower_is_better = is_lower_better(indicator)
 
     if (not is_rate_like(indicator)) and float(slovenia_value) != 0:
         share = (float(region_value) / float(slovenia_value)) * 100.0
@@ -363,20 +363,26 @@ def build_region_indicator_table(
     region_total,
     view_title: str,
 ) -> pd.DataFrame:
+    numeric_values = pd.to_numeric(region_df[indicator], errors="coerce")
     table = pd.DataFrame(
         {
             "Občina": region_df["Občine"].astype(str),
-            "Vrednost": region_df[indicator].astype(float).apply(lambda value: format_indicator_value_tables(indicator, value)),
+            "_sort_value": numeric_values,
+            "Vrednost": numeric_values.apply(lambda value: format_indicator_value_tables(indicator, value)),
         }
     )
 
     if region_total and not np.isnan(region_total) and region_total != 0 and not is_rate_like(indicator):
         if indicator in INDIKATORJI_Z_INDEKSI:
-            table[f"Indeks {view_title}"] = round((table["Vrednost"] / region_total) * 100, 1)
+            table[f"Indeks {view_title}"] = round((table["_sort_value"] / region_total) * 100, 1)
         else:
-            table[f"Delež {view_title} (%)"] = round(table["Vrednost"] / region_total, 3)
+            table[f"Delež {view_title} (%)"] = round(table["_sort_value"] / region_total, 3)
 
-    return table.sort_values("Vrednost", ascending=False, na_position="last")
+    return (
+        table.sort_values("_sort_value", ascending=is_lower_better(indicator), na_position="last")
+        .drop(columns="_sort_value")
+        .reset_index(drop=True)
+    )
 
 
 def format_indicator_option_label(indicator: str, indicator_to_group: dict[str, str]) -> str:
@@ -408,6 +414,15 @@ def prefix_rank_to_label_column(df: pd.DataFrame, label_column: str) -> pd.DataF
         for index, value in enumerate(ranked_df[label_column].astype(str), start=1)
     ]
     return ranked_df
+
+
+def streamlit_safe_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a display copy with string column names for Streamlit."""
+    if all(isinstance(column, str) for column in df.columns):
+        return df
+    safe_df = df.copy()
+    safe_df.columns = [str(column) for column in safe_df.columns]
+    return safe_df
 
 
 def ranked_column_config(
@@ -442,7 +457,7 @@ def render_ranked_dataframe(
     hide_index: bool = True,
     height: int | None = None,
 ) -> None:
-    ranked_df = prepend_rank_column(df)
+    ranked_df = streamlit_safe_dataframe(prepend_rank_column(df))
     dataframe_kwargs: dict[str, Any] = {
         "width": use_container_width,
         "hide_index": hide_index,
@@ -993,6 +1008,7 @@ def render_market_structure_pie_table(
             ]
         )
         table = pd.concat([table, total_row], ignore_index=True)
+        table = streamlit_safe_dataframe(table)
         st.dataframe(
             table,
             width="stretch",
@@ -2181,7 +2197,8 @@ def render_comparison_indicator_chart(
         st.plotly_chart(fig, width="stretch")
         return
 
-    plot_df = plot_df.sort_values(value_col, ascending=False).reset_index(drop=True)
+    lower_better = is_lower_better(indicator)
+    plot_df = plot_df.sort_values(value_col, ascending=lower_better).reset_index(drop=True)
     plot_df["Value_label"] = plot_df[value_col].apply(lambda value: format_indicator_value_map(indicator, value))
     orientation = "h" if should_use_horizontal_chart(plot_df[label_col]) else "v"
     st.markdown(f"**{title}** ***(vrednost)***")
@@ -2653,6 +2670,9 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         )
         show_shared_warning_if_needed_indicator(map_indicator)
 
+    map_reverse_color_scale = is_lower_better(map_indicator)
+    map_color_direction = "lower_better" if map_reverse_color_scale else "higher_better"
+
     dash_inds = []
     if ctx.dashboard_mode:
         dash_inds = st.multiselect(
@@ -2696,6 +2716,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             sort_direction = st.radio(
                 "Smer",
                 ["Padajoče", "Naraščajoče"],
+                index=1 if is_lower_better(sort_indicator) else 0,
                 horizontal=True,
                 key=f"compare_sort_dir_{group_col}",
             )
@@ -2712,6 +2733,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         for column in agg_needed:
             comparison_widths[get_indicator_display_name(column)] = "medium"
 
+        show_df = streamlit_safe_dataframe(show_df)
         st.dataframe(
             show_df,
             width='stretch',
@@ -2844,7 +2866,9 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                             group_col=group_col,
                             selected_region="__all_regions_fallback__",
                             indicator_label=map_indicator,
+                            color_direction=map_color_direction,
                         ),
+                        reverse_color_scale=map_reverse_color_scale,
                     )
                 else:
                     render_map_regions(
@@ -2858,7 +2882,9 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                             geojson_signature=ctx.geojson_signature,
                             group_col=group_col,
                             indicator_label=map_indicator,
+                            color_direction=map_color_direction,
                         ),
+                        reverse_color_scale=map_reverse_color_scale,
                     )
             else:
                 municipalities_in_region = set(region_df["__obcina_norm__"].tolist())
@@ -2879,7 +2905,9 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                         group_col=group_col,
                         selected_region=selected_region,
                         indicator_label=map_indicator,
+                        color_direction=map_color_direction,
                     ),
+                    reverse_color_scale=map_reverse_color_scale,
                 )
         show_shared_warning_if_needed_map(map_indicator)
 
@@ -2897,7 +2925,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             )
             if show_share_column:
                 table["Delež Slovenije (%)"] = table[map_indicator].astype(float) / float(slovenia_total)
-            table = table.sort_values(map_indicator, ascending=False, na_position="last")
+            table = table.sort_values(map_indicator, ascending=is_lower_better(map_indicator), na_position="last")
             table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
             table = table.rename(columns={map_indicator: "Vrednost"})
             source_columns = {"Vrednost": map_indicator}
@@ -3270,6 +3298,7 @@ def render_national_trend_chart(sector_df: pd.DataFrame, sector_id: str) -> None
     )
     st.plotly_chart(fig, width="stretch")
     table = chart_df.pivot(index="Kazalnik", columns="Leto", values="Vrednost").reset_index()
+    table = streamlit_safe_dataframe(table)
     st.dataframe(table, width="stretch", hide_index=True)
 
 
@@ -3347,6 +3376,7 @@ def render_national_comparison(sector_df: pd.DataFrame, sector_id: str, *, real:
         }
     )
     table["Kazalnik"] = table["Kazalnik"].apply(get_indicator_display_name)
+    table = streamlit_safe_dataframe(table)
     st.dataframe(table, width="stretch", hide_index=True)
 
 
@@ -3383,7 +3413,8 @@ def render_national_all_indicators_table(sector_df: pd.DataFrame, sector_id: str
                 "Enota": row["unit"],
             }
         )
-    st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True, height=680)
+    table = streamlit_safe_dataframe(pd.DataFrame(table_rows))
+    st.dataframe(table, width="stretch", hide_index=True, height=680)
 
 
 def render_national_business_indicators() -> None:
@@ -3437,6 +3468,132 @@ def render_national_business_indicators() -> None:
     with detail_tab:
         render_section_heading("Podrobna tabela kazalnikov")
         render_national_all_indicators_table(sector_df, selected_sector)
+
+
+def render_news_article_placeholder_cards(category: str) -> None:
+    st.markdown(
+        """
+        <div class="news-placeholder-grid">
+            <div class="news-placeholder-card">
+                <div class="news-placeholder-date">V izdelavi</div>
+                <div class="news-placeholder-title">Naslov objave</div>
+                <div class="news-placeholder-text">Tukaj bodo prikazane najnovejše objave za izbrani sklop.</div>
+            </div>
+            <div class="news-placeholder-card">
+                <div class="news-placeholder-date">V izdelavi</div>
+                <div class="news-placeholder-title">Naslov objave</div>
+                <div class="news-placeholder-text">Objave bodo urejene po datumu, najnovejše na vrhu.</div>
+            </div>
+            <div class="news-placeholder-card">
+                <div class="news-placeholder-date">V izdelavi</div>
+                <div class="news-placeholder-title">Naslov objave</div>
+                <div class="news-placeholder-text">Klik na naslov bo odprl povezavo do spletne objave.</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.info(f"{category}: V izdelavi")
+
+
+def render_news_and_articles() -> None:
+    st.markdown('<div id="novice-in-strokovni-clanki"></div>', unsafe_allow_html=True)
+    st.subheader("Novice in strokovni članki")
+    st.markdown(
+        """
+        <style>
+        .news-placeholder-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin: 12px 0 18px;
+        }
+        .news-placeholder-card {
+            min-height: 150px;
+            border-radius: 8px;
+            padding: 16px;
+            color: #ffffff;
+            background:
+                linear-gradient(135deg, rgba(15, 23, 42, 0.84), rgba(30, 64, 175, 0.72)),
+                linear-gradient(90deg, #2563eb, #16a34a);
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+        }
+        .news-placeholder-date {
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            opacity: 0.82;
+            margin-bottom: 24px;
+        }
+        .news-placeholder-title {
+            font-size: 1.05rem;
+            font-weight: 800;
+            line-height: 1.25;
+            margin-bottom: 8px;
+        }
+        .news-placeholder-text {
+            font-size: 0.9rem;
+            line-height: 1.35;
+            opacity: 0.9;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    (
+        slovenia_news_tab,
+        slovenia_articles_tab,
+        international_news_tab,
+        international_articles_tab,
+        analyses_tab,
+        strategy_docs_tab,
+    ) = st.tabs(
+        [
+            "Novice Slovenija",
+            "Strokovni članki Slovenija",
+            "Mednarodne novice",
+            "Mednarodni strokovni članki",
+            "Posebne analize in študije",
+            "Strateški razvojni dokumenti turističnih destinacij",
+        ]
+    )
+
+    with slovenia_news_tab:
+        render_news_article_placeholder_cards("Novice Slovenija")
+
+    with slovenia_articles_tab:
+        render_news_article_placeholder_cards("Strokovni članki Slovenija")
+
+    with international_news_tab:
+        render_news_article_placeholder_cards("Mednarodne novice")
+
+    with international_articles_tab:
+        render_news_article_placeholder_cards("Mednarodni strokovni članki")
+
+    with analyses_tab:
+        st.markdown("#### Posebne analize in študije")
+        st.info("V izdelavi")
+
+    with strategy_docs_tab:
+        st.markdown("#### Strateški razvojni dokumenti turističnih destinacij")
+        (
+            national_tab,
+            leading_tab,
+            prospective_tab,
+            municipalities_tab,
+        ) = st.tabs(["Slovenija – nacionalna raven", "Vodilne destinacije", "Perspektivne destinacije", "Občine"])
+        with national_tab:
+            st.info("V izdelavi")
+        with leading_tab:
+            st.selectbox("Entiteta", ["V izdelavi"], key="strategy_docs_leading_entity", disabled=True)
+            st.info("V izdelavi")
+        with prospective_tab:
+            st.selectbox("Entiteta", ["V izdelavi"], key="strategy_docs_prospective_entity", disabled=True)
+            st.info("V izdelavi")
+        with municipalities_tab:
+            st.selectbox("Entiteta", ["V izdelavi"], key="strategy_docs_municipality_entity", disabled=True)
+            st.info("V izdelavi")
 
 
 def render_compass_destination_index(ctx: DashboardContext, logo_path: Any | None = None) -> None:
@@ -3661,6 +3818,7 @@ def render_compass_destination_index(ctx: DashboardContext, logo_path: Any | Non
                 }
             )
             table_df["Vrednost indeksa"] = table_df["Vrednost indeksa"].apply(lambda value: format_si_number(value, 1))
+            table_df = streamlit_safe_dataframe(table_df)
             st.dataframe(
                 table_df,
                 width="stretch",

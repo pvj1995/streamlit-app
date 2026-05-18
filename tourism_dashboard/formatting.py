@@ -52,8 +52,8 @@ def is_rate_like(column_name: str) -> bool:
         "Delež sob (enot) v kampih 2025",
         "Delež sob (enot) v turističnih kmetijah z nastanitvijo 2025",
         "Delež sob (enot) v vseh drugih vrstah NO 2025",
-        "Povprečna letna zasedenost staln. ležišč 2024",
-        "Povprečna letna zasedenost staln. ležišč 2025",
+        "Povprečna letna zasedenost staln. Ležišč 2024",
+        "Povprečna letna zasedenost staln. Ležišč 2025",
         "Ocenjena povp. Letna zased. sob (nedeljivih enot)",
         "Ocenjena povp. Letna zased. sob (nedeljivih enot) 2025",
         "Delež delovno aktivnih od vseh prebivalcev območja",
@@ -90,7 +90,20 @@ def is_rate_like(column_name: str) -> bool:
 
 
 def is_lower_better(indicator: str) -> bool:
-    return indicator in LOWER_IS_BETTER_INDICATORS
+    if indicator in LOWER_IS_BETTER_INDICATORS:
+        return True
+    normalized = str(indicator or "").lower()
+    lower_better_keywords = (
+        "gini",
+        "počitniških stanovanj",
+        "pritisk turizma",
+        "gostota turizma",
+        "intenzivnost turizma",
+        "poraba el.energ",
+        "poraba elektr",
+        "stroškov dela",
+    )
+    return any(keyword in normalized for keyword in lower_better_keywords)
 
 
 def is_percent_like(column_name: str) -> bool:
@@ -158,7 +171,7 @@ def format_indicator_value_tables(indicator: str, value):
     if is_percent_like(indicator):
         return round(value, 3)
     if "GINI" in indicator:
-        return round(value, 1)
+        return round(value, 2)
     return round(value, 2)
 
 
@@ -166,7 +179,7 @@ def format_indicator_value_map(indicator: str, value):
     if is_percent_like(indicator):
         return format_pct(float(value) * 100.0, 1)
     if "GINI" in indicator:
-        return format(round(value, 1), ".1f")
+        return format(round(value, 2), ".2f")
     if indicator in INDIKATORJI_Z_VALUTO:
         return f"{format_si_number(value)} €"
     return format_si_number(value)
