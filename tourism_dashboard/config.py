@@ -118,6 +118,10 @@ COMPASS_INDEX_SHEETS = [
 ]
 
 MARKET_PREFIX = "Delež vseh prenočitev - "
+HIDDEN_SELECTABLE_INDICATORS = {
+    "Prenočitve - povprečno število prenočitev na mesec",
+    "Prenočitve - povprečno število prenočitev na mesec 2024",
+}
 MARKET_COLOR_MAP = {
     "Domači trg": "#1f77b4",
     "DACH trgi (nemško govoreči trgi: D, A in CH)": "#ff7f0e",

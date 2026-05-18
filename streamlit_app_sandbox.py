@@ -15,6 +15,7 @@ from tourism_dashboard.config import (
     FOOTER_LOGO_FILENAME,
     FOOTER_SOURCE_TEXT,
     GEOJSON_FILENAME,
+    HIDDEN_SELECTABLE_INDICATORS,
     MAPPING_XLSX_FILENAME,
     MARKET_PREFIX,
     PAGE_TITLE,
@@ -179,7 +180,11 @@ def build_data_bundle(
         *[column for _, column in views],
     }
     value_cols = [column for column in df.columns if column not in meta_cols]
-    indicator_cols = [column for column in value_cols if column not in market_cols]
+    indicator_cols = [
+        column
+        for column in value_cols
+        if column not in market_cols and column not in HIDDEN_SELECTABLE_INDICATORS
+    ]
     numeric_df = build_numeric_dataframe(df, value_cols)
 
     return {
