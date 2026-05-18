@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import textwrap
 from typing import TYPE_CHECKING, Any, cast
 
@@ -78,6 +79,16 @@ from tourism_dashboard.maps import (
     render_map_regions,
 )
 from tourism_dashboard.models import DashboardContext
+from tourism_dashboard.national_kpi import (
+    NATIONAL_MAIN_SECTION,
+    NATIONAL_NOMINAL_COMPARISON_SECTION,
+    NATIONAL_SECTOR_LABELS,
+    comparison_section_name,
+    get_national_kpi_path,
+    get_national_sector_options,
+    load_national_business_kpi_data,
+    sector_rows,
+)
 
 
 if TYPE_CHECKING:
@@ -136,6 +147,45 @@ def green_metric_small(label, value):
         """,
         unsafe_allow_html=True,
     )
+
+
+def format_national_kpi_value(value: Any, format_type: str, unit: str = "", *, compact: bool = True) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    number = float(value)
+    format_type = str(format_type or "").strip()
+    unit = str(unit or "").strip()
+    if format_type == "percent_decimal":
+        return format_pct(number * 100.0, 1)
+    if format_type == "currency":
+        if compact and abs(number) >= 1_000_000_000:
+            return f"{format_si_number(number / 1_000_000_000, 1)} mrd €"
+        if compact and abs(number) >= 1_000_000:
+            return f"{format_si_number(number / 1_000_000, 1)} mio €"
+        return f"{format_si_number(number, 0)} €"
+    if format_type == "index":
+        return format_si_number(number, 1)
+    if unit == "št.":
+        return format_si_number(number, 0)
+    return format_si_number(number, 1)
+
+
+def national_kpi_change(
+    start_value: Any,
+    end_value: Any,
+    format_type: str,
+) -> tuple[float | None, str]:
+    if start_value is None or end_value is None or pd.isna(start_value) or pd.isna(end_value):
+        return None, "—"
+    start = float(start_value)
+    end = float(end_value)
+    if str(format_type) == "percent_decimal":
+        change = (end - start) * 100.0
+        return change, f"{'+' if change >= 0 else ''}{format_si_number(change, 1)} o.t."
+    if start == 0:
+        return None, "—"
+    change = ((end / start) - 1.0) * 100.0
+    return change, f"{'+' if change >= 0 else ''}{format_si_number(change, 1)} %"
 
 
 def build_slovenia_metric_delta(indicator: str, region_value: float, slovenia_value) -> str:
@@ -2933,6 +2983,452 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             group_sections,
             market_ai_context=market_ai_context,
         )
+
+NATIONAL_KPI_PRIORITY_METRICS = [
+    "Čisti prihodki od prodaje",
+    "Denarni tok iz poslovanja (EBITDA)",
+    "EBITDA marža",
+    "Čisti dobiček ali čista izguba",
+    "Čisti dobiček/izguba",
+    "Dodana vrednost ali izguba na substanci na zaposlenega",
+    "Dodana vrednost/zaposlenega",
+    "Število zaposlenih",
+    "Število vseh prenočitev",
+    "Povprečna zasedenost stalnih ležišč",
+]
+
+NATIONAL_TREND_GROUPS = {
+    "Vodstveni povzetek": [
+        "Čisti prihodki od prodaje",
+        "Denarni tok iz poslovanja (EBITDA)",
+        "Čisti dobiček ali čista izguba",
+        "Čisti dobiček/izguba",
+        "Dodana vrednost ali izguba na substanci na zaposlenega",
+        "Število zaposlenih",
+    ],
+    "Obseg in kapacitete": [
+        "Število subjektov",
+        "Število poslovnih subjektov",
+        "Število zaposlenih",
+        "Število stalnih ležišč",
+        "Število vseh prenočitev",
+    ],
+    "Prihodki in rezultat": [
+        "Čisti prihodki od prodaje",
+        "Prihodki",
+        "Dobiček ali izguba iz poslovanja (EBIT)",
+        "Denarni tok iz poslovanja (EBITDA)",
+        "Čisti dobiček ali čista izguba",
+        "Čisti dobiček/izguba",
+    ],
+    "Produktivnost": [
+        "Dodana vrednost ali izguba na substanci na zaposlenega",
+        "Dodana vrednost/zaposlenega",
+        "Produktivnost (DV v EUR na delovno uro)",
+        "Povprečno realiziran Prihodek na zaposlenega",
+        "Povprečno realiziran EBITDA na zaposlenega",
+    ],
+    "Marže in stroški": [
+        "EBITDA marža",
+        "Profitna marža",
+        "Delež stroškov dela v čistih prihodkih od prodaje",
+        "Delež stroškov dela v dodani vrednosti",
+        "Delež stroškov dela, blaga, materiala in storitev v prihodkih",
+    ],
+}
+
+
+def normalize_metric_label(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+
+def first_matching_metric(available_metrics: list[str], candidates: list[str]) -> str | None:
+    normalized_available = {normalize_metric_label(metric): metric for metric in available_metrics}
+    for candidate in candidates:
+        exact = normalized_available.get(normalize_metric_label(candidate))
+        if exact:
+            return exact
+    for candidate in candidates:
+        candidate_norm = normalize_metric_label(candidate)
+        for metric in available_metrics:
+            if candidate_norm in normalize_metric_label(metric):
+                return metric
+    return None
+
+
+def deduplicate_national_metric_years(rows: pd.DataFrame) -> pd.DataFrame:
+    return (
+        rows.sort_values("source_order")
+        .drop_duplicates(subset=["metric", "year"], keep="first")
+        .reset_index(drop=True)
+    )
+
+
+def build_national_metric_wide(rows: pd.DataFrame) -> pd.DataFrame:
+    if rows.empty:
+        return pd.DataFrame()
+    deduped = deduplicate_national_metric_years(rows)
+    values = deduped.pivot(index="metric", columns="year", values="value")
+    meta = deduped.sort_values("source_order").drop_duplicates("metric", keep="first")
+    meta = meta.set_index("metric")[["unit", "format_type", "higher_is_better", "source_order"]]
+    wide = meta.join(values, how="left").sort_values("source_order").reset_index()
+    return wide
+
+
+def build_national_comparison_rows(
+    df: pd.DataFrame,
+    sector_id: str,
+    *,
+    real: bool,
+) -> tuple[pd.DataFrame, str | None, str | None]:
+    end_section = comparison_section_name(df, sector_id, real=real)
+    real_from_duplicate_nominal_rows = False
+    if real and end_section is None:
+        nominal_2024_rows = sector_rows(df, sector_id, NATIONAL_NOMINAL_COMPARISON_SECTION)
+        nominal_2024_rows = nominal_2024_rows[nominal_2024_rows["year"] == 2024]
+        real_from_duplicate_nominal_rows = nominal_2024_rows.duplicated(["metric", "year"], keep=False).any()
+        if real_from_duplicate_nominal_rows:
+            end_section = NATIONAL_NOMINAL_COMPARISON_SECTION
+    if end_section is None:
+        return pd.DataFrame(), None, None
+
+    start_section = NATIONAL_NOMINAL_COMPARISON_SECTION if real else end_section
+    if start_section not in df[df["sector_id_norm"] == sector_id]["section"].unique():
+        start_section = NATIONAL_MAIN_SECTION
+
+    start_rows = sector_rows(df, sector_id, start_section)
+    end_rows = sector_rows(df, sector_id, end_section)
+    start_rows = deduplicate_national_metric_years(start_rows[start_rows["year"] == 2019])
+    end_rows = end_rows[end_rows["year"] == 2024].sort_values("source_order")
+    if real_from_duplicate_nominal_rows:
+        end_rows = (
+            end_rows[end_rows.duplicated(["metric", "year"], keep=False)]
+            .drop_duplicates(subset=["metric", "year"], keep="last")
+            .reset_index(drop=True)
+        )
+    else:
+        end_rows = deduplicate_national_metric_years(end_rows)
+    if start_rows.empty or end_rows.empty:
+        return pd.DataFrame(), start_section, end_section
+
+    comparison = start_rows[
+        ["metric", "value", "unit", "format_type", "higher_is_better", "source_order"]
+    ].merge(
+        end_rows[["metric", "value", "unit", "format_type", "higher_is_better", "source_order"]],
+        on="metric",
+        suffixes=("_2019", "_2024"),
+    )
+    if comparison.empty:
+        return comparison, start_section, end_section
+
+    comparison["format_type"] = comparison["format_type_2024"].fillna(comparison["format_type_2019"])
+    comparison["unit"] = comparison["unit_2024"].fillna(comparison["unit_2019"])
+    comparison["higher_is_better"] = comparison["higher_is_better_2024"].fillna(comparison["higher_is_better_2019"])
+    comparison["sort_order"] = comparison[["source_order_2024", "source_order_2019"]].min(axis=1)
+    changes = comparison.apply(
+        lambda row: national_kpi_change(row["value_2019"], row["value_2024"], row["format_type"]),
+        axis=1,
+    )
+    comparison["change_value"] = [item[0] for item in changes]
+    comparison["change_label"] = [item[1] for item in changes]
+    comparison["value_2019_label"] = comparison.apply(
+        lambda row: format_national_kpi_value(row["value_2019"], row["format_type"], row["unit"]),
+        axis=1,
+    )
+    comparison["value_2024_label"] = comparison.apply(
+        lambda row: format_national_kpi_value(row["value_2024"], row["format_type"], row["unit"]),
+        axis=1,
+    )
+    comparison["outcome"] = comparison.apply(
+        lambda row: (
+            "Ugodno"
+            if pd.notna(row["change_value"]) and bool(row["higher_is_better"]) == (float(row["change_value"]) >= 0)
+            else "Neugodno"
+            if pd.notna(row["change_value"])
+            else "Ni podatka"
+        ),
+        axis=1,
+    )
+    return comparison.sort_values("sort_order").reset_index(drop=True), start_section, end_section
+
+
+def render_national_kpi_card(metric: str, row: pd.Series) -> None:
+    if 2024 not in row.index or pd.isna(row.get(2024)):
+        return
+    value_label = format_national_kpi_value(row[2024], row["format_type"], row["unit"])
+    _, delta_label = national_kpi_change(row.get(2019), row.get(2024), row["format_type"])
+    st.metric(
+        get_indicator_display_name(metric),
+        value_label,
+        delta_label if delta_label != "—" else None,
+        delta_color="normal" if bool(row.get("higher_is_better", True)) else "inverse",
+    )
+
+
+def render_national_kpi_overview(sector_df: pd.DataFrame, sector_id: str, sector_label: str) -> None:
+    main_rows = sector_rows(sector_df, sector_id, NATIONAL_MAIN_SECTION)
+    wide = build_national_metric_wide(main_rows)
+    if wide.empty:
+        st.info("Za izbrano raven ni podatkov za vodstveni pregled.")
+        return
+
+    st.markdown(f"### {sector_label}")
+    st.caption("Ključne vrednosti za leto 2024 s primerjavo glede na leto 2019.")
+    available_metrics = wide["metric"].astype(str).tolist()
+    selected_metrics: list[str] = []
+    for candidate in NATIONAL_KPI_PRIORITY_METRICS:
+        match = first_matching_metric(available_metrics, [candidate])
+        if match and match not in selected_metrics:
+            selected_metrics.append(match)
+        if len(selected_metrics) >= 8:
+            break
+    if not selected_metrics:
+        selected_metrics = available_metrics[:8]
+
+    for start in range(0, len(selected_metrics), 4):
+        cols = st.columns(4)
+        for col, metric in zip(cols, selected_metrics[start : start + 4]):
+            row = wide[wide["metric"] == metric].iloc[0]
+            with col:
+                render_national_kpi_card(metric, row)
+
+
+def render_national_trend_chart(sector_df: pd.DataFrame, sector_id: str) -> None:
+    main_rows = sector_rows(sector_df, sector_id, NATIONAL_MAIN_SECTION)
+    wide = build_national_metric_wide(main_rows)
+    if wide.empty:
+        st.info("Za izbrano raven ni časovnih vrst.")
+        return
+
+    group_name = st.selectbox(
+        "Skupina kazalnikov",
+        list(NATIONAL_TREND_GROUPS.keys()),
+        index=0,
+        key=f"national_trend_group_{sector_id}",
+    )
+    available_metrics = wide["metric"].astype(str).tolist()
+    selected_metrics = [
+        metric
+        for metric in (
+            first_matching_metric(available_metrics, [candidate])
+            for candidate in NATIONAL_TREND_GROUPS[group_name]
+        )
+        if metric
+    ]
+    selected_metrics = list(dict.fromkeys(selected_metrics))
+    if not selected_metrics:
+        selected_metrics = available_metrics[:8]
+
+    chart_rows: list[dict[str, Any]] = []
+    for _, row in wide[wide["metric"].isin(selected_metrics)].iterrows():
+        base_value = row.get(2019)
+        if base_value is None or pd.isna(base_value) or float(base_value) == 0:
+            continue
+        for year in [2019, 2023, 2024]:
+            value = row.get(year)
+            if value is None or pd.isna(value):
+                continue
+            chart_rows.append(
+                {
+                    "Kazalnik": get_indicator_display_name(str(row["metric"])),
+                    "Leto": int(year),
+                    "Indeks 2019 = 100": (float(value) / float(base_value)) * 100.0,
+                    "Vrednost": format_national_kpi_value(value, row["format_type"], row["unit"]),
+                }
+            )
+
+    chart_df = pd.DataFrame(chart_rows)
+    if chart_df.empty:
+        st.info("Za izbrano skupino ni dovolj podatkov za trendni graf.")
+        return
+
+    fig = px.line(
+        chart_df,
+        x="Leto",
+        y="Indeks 2019 = 100",
+        color="Kazalnik",
+        markers=True,
+        custom_data=["Kazalnik", "Vrednost"],
+    )
+    fig.update_traces(
+        hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Indeks: %{y:.1f}<br>Vrednost: %{customdata[1]}<extra></extra>"
+    )
+    fig.add_hline(y=100, line_color="#64748b", line_dash="dash", line_width=1)
+    fig.update_layout(
+        margin=dict(t=20, b=20, l=10, r=10),
+        legend_title_text="Kazalnik",
+        yaxis_title="Indeks 2019 = 100",
+        xaxis_title="Leto",
+    )
+    st.plotly_chart(fig, width="stretch")
+    table = chart_df.pivot(index="Kazalnik", columns="Leto", values="Vrednost").reset_index()
+    st.dataframe(table, width="stretch", hide_index=True)
+
+
+def render_national_comparison(sector_df: pd.DataFrame, sector_id: str, *, real: bool) -> None:
+    comparison_df, _, end_section = build_national_comparison_rows(sector_df, sector_id, real=real)
+    if comparison_df.empty:
+        st.info("Za ta prikaz trenutno ni dovolj podatkov za primerjavo 2024/2019.")
+        return
+
+    if real:
+        st.caption("Realna primerjava uporablja nominalne vrednosti za 2019 in deflacionirane vrednosti za 2024.")
+    elif end_section != NATIONAL_MAIN_SECTION:
+        st.caption("Nominalna primerjava uporablja pripravljeni sklop »Primerjava kazalnikov - 2024/2019 - nominalno«.")
+
+    metric_options = comparison_df["metric"].astype(str).tolist()
+    default_metrics = [
+        metric
+        for metric in (
+            first_matching_metric(metric_options, [candidate])
+            for candidate in NATIONAL_KPI_PRIORITY_METRICS
+        )
+        if metric
+    ]
+    default_metrics = list(dict.fromkeys(default_metrics))[:10]
+    selected_metrics = st.multiselect(
+        "Kazalniki za graf",
+        metric_options,
+        default=default_metrics or metric_options[:10],
+        key=f"national_compare_metrics_{sector_id}_{'real' if real else 'nominal'}",
+        format_func=get_indicator_display_name,
+    )
+    chart_df = comparison_df[comparison_df["metric"].isin(selected_metrics)].dropna(subset=["change_value"]).copy()
+    if not chart_df.empty:
+        chart_df["Kazalnik"] = chart_df["metric"].apply(get_indicator_display_name)
+        chart_df["Kazalnik_chart"] = chart_df["Kazalnik"].apply(lambda value: wrap_market_chart_label(value, 26))
+        fig = px.bar(
+            chart_df.sort_values("change_value", ascending=True),
+            x="change_value",
+            y="Kazalnik_chart",
+            orientation="h",
+            color="outcome",
+            color_discrete_map={"Ugodno": "#16a34a", "Neugodno": "#dc2626", "Ni podatka": "#64748b"},
+            custom_data=["Kazalnik", "value_2019_label", "value_2024_label", "change_label"],
+            text="change_label",
+        )
+        fig.update_traces(
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "2019: %{customdata[1]}<br>"
+                "2024: %{customdata[2]}<br>"
+                "Sprememba: %{customdata[3]}<extra></extra>"
+            ),
+        )
+        fig.add_vline(x=0, line_color="#64748b", line_width=1)
+        fig.update_layout(
+            margin=dict(t=20, b=20, l=10, r=10),
+            xaxis_title="Sprememba 2024/2019 (% ali o.t.)",
+            yaxis_title=None,
+            legend_title_text="Interpretacija",
+            height=max(420, 44 * len(chart_df) + 100),
+        )
+        st.plotly_chart(fig, width="stretch")
+
+    table = comparison_df[
+        ["metric", "value_2019_label", "value_2024_label", "change_label", "outcome"]
+    ].rename(
+        columns={
+            "metric": "Kazalnik",
+            "value_2019_label": "2019",
+            "value_2024_label": "2024",
+            "change_label": "Sprememba 2024/2019",
+            "outcome": "Interpretacija",
+        }
+    )
+    table["Kazalnik"] = table["Kazalnik"].apply(get_indicator_display_name)
+    st.dataframe(table, width="stretch", hide_index=True)
+
+
+def render_national_all_indicators_table(sector_df: pd.DataFrame, sector_id: str) -> None:
+    sections = sector_df["section"].dropna().drop_duplicates().tolist()
+    selected_section = st.selectbox(
+        "Sklop podatkov",
+        sections,
+        index=0,
+        key=f"national_table_section_{sector_id}",
+    )
+    rows = sector_rows(sector_df, sector_id, selected_section)
+    if str(selected_section).startswith("Primerjava kazalnikov - 2024/2019 - realno"):
+        nominal_rows = sector_rows(sector_df, sector_id, NATIONAL_NOMINAL_COMPARISON_SECTION)
+        nominal_2019_rows = nominal_rows[nominal_rows["year"] == 2019].copy()
+        real_metrics = set(rows["metric"].dropna().astype(str))
+        nominal_2019_rows = nominal_2019_rows[nominal_2019_rows["metric"].astype(str).isin(real_metrics)]
+        rows = pd.concat([nominal_2019_rows, rows], ignore_index=True)
+    wide = build_national_metric_wide(rows)
+    if wide.empty:
+        st.info("Za izbrani sklop ni podatkov.")
+        return
+
+    table_rows: list[dict[str, Any]] = []
+    for _, row in wide.iterrows():
+        _, change_label = national_kpi_change(row.get(2019), row.get(2024), row["format_type"])
+        table_rows.append(
+            {
+                "Kazalnik": get_indicator_display_name(str(row["metric"])),
+                "2019": format_national_kpi_value(row.get(2019), row["format_type"], row["unit"]),
+                "2023": format_national_kpi_value(row.get(2023), row["format_type"], row["unit"]),
+                "2024": format_national_kpi_value(row.get(2024), row["format_type"], row["unit"]),
+                "Primerjava 2024/2019": change_label,
+                "Enota": row["unit"],
+            }
+        )
+    st.dataframe(pd.DataFrame(table_rows), width="stretch", hide_index=True, height=680)
+
+
+def render_national_business_indicators() -> None:
+    st.subheader("Ključni razvojni in poslovni kazalniki - nacionalna raven")
+    st.caption("Nacionalni prikaz brez regionalnih, destinacijskih ali občinskih členitev.")
+
+    try:
+        kpi_df = load_national_business_kpi_data()
+    except Exception as exc:
+        st.error(f"Nacionalnih KPI podatkov ni bilo mogoče prebrati: {exc}")
+        return
+
+    if kpi_df.empty:
+        st.warning(f"Ne najdem podatkov v datoteki: {get_national_kpi_path().name}")
+        return
+
+    sector_options = get_national_sector_options(kpi_df)
+    if not sector_options:
+        st.warning("V nacionalni KPI datoteki ne najdem pričakovanih ravni dejavnosti.")
+        return
+
+    selected_sector = st.radio(
+        "Raven dejavnosti",
+        sector_options,
+        horizontal=True,
+        key="national_business_sector",
+        format_func=lambda sector_id: NATIONAL_SECTOR_LABELS.get(sector_id, sector_id),
+    )
+    sector_label = NATIONAL_SECTOR_LABELS.get(selected_sector, selected_sector)
+    sector_df = kpi_df[kpi_df["sector_id_norm"] == selected_sector].copy()
+
+    overview_tab, trend_tab, comparison_tab, detail_tab = st.tabs(
+        ["Vodstveni pregled", "Trendi kazalnikov", "Primerjava 2024/2019", "Vsi kazalniki"]
+    )
+    with overview_tab:
+        render_national_kpi_overview(sector_df, selected_sector, sector_label)
+    with trend_tab:
+        render_section_heading(
+            "Trendi kazalnikov",
+            "Kazalniki so prikazani kot indeks, kjer je leto 2019 enako 100. To omogoča primerjavo kazalnikov z različnimi enotami.",
+        )
+        render_national_trend_chart(sector_df, selected_sector)
+    with comparison_tab:
+        nominal_tab, real_tab = st.tabs(["Nominalno", "Realno"])
+        with nominal_tab:
+            render_section_heading("Nominalna primerjava 2024/2019")
+            render_national_comparison(sector_df, selected_sector, real=False)
+        with real_tab:
+            render_section_heading("Realna primerjava 2024/2019")
+            render_national_comparison(sector_df, selected_sector, real=True)
+    with detail_tab:
+        render_section_heading("Podrobna tabela kazalnikov")
+        render_national_all_indicators_table(sector_df, selected_sector)
 
 
 def render_accommodation_capacity_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:

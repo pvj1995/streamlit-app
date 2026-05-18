@@ -28,8 +28,11 @@ from tourism_dashboard.config import (  # noqa: E402
     DASHBOARD_MAIN_FRAME_KEY,
     DASHBOARD_MAPPING_FRAME_KEY,
     DASHBOARD_MARKET_GROWTH_FRAME_KEY,
+    DASHBOARD_NATIONAL_KPI_FRAME_KEY,
     DATA_XLSX_FILENAME,
     MAPPING_XLSX_FILENAME,
+    NATIONAL_KPI_SHEET_NAME,
+    NATIONAL_KPI_XLSX_FILENAME,
 )
 from tourism_dashboard.helpers import (  # noqa: E402
     find_market_arrivals_seasonality_files,
@@ -154,6 +157,10 @@ def build_frames() -> list[FrameSpec]:
         raise FileNotFoundError(f"Missing main workbook: {main_path}")
     if not mapping_path.exists():
         raise FileNotFoundError(f"Missing mapping workbook: {mapping_path}")
+    national_kpi_path = first_existing(
+        DATA_DIR / NATIONAL_KPI_XLSX_FILENAME,
+        BASE_DIR / NATIONAL_KPI_XLSX_FILENAME,
+    )
 
     frames = [
         FrameSpec(
@@ -178,6 +185,18 @@ def build_frames() -> list[FrameSpec]:
             frame_type="mapping",
         ),
     ]
+
+    if national_kpi_path.exists():
+        frames.append(
+            FrameSpec(
+                frame_key=DASHBOARD_NATIONAL_KPI_FRAME_KEY,
+                df=pd.read_excel(national_kpi_path, sheet_name=NATIONAL_KPI_SHEET_NAME),
+                source_filename=national_kpi_path.name,
+                sheet_name=NATIONAL_KPI_SHEET_NAME,
+                frame_type="national_kpi",
+                frame_kind="kpi_long",
+            )
+        )
 
     monthly_sources = [
         ("overnights", find_market_overnight_seasonality_files, load_market_overnight_seasonality_workbook),

@@ -44,6 +44,7 @@ from tourism_dashboard.paths import BASE_DIR, DATA_DIR, LOGOS_DIR, first_existin
 from tourism_dashboard.ui import (
     render_accommodation_capacity_structure,
     render_market_structure,
+    render_national_business_indicators,
     render_view,
 )
 
@@ -287,11 +288,12 @@ ctx = DashboardContext(
     dashboard_mode=dashboard_mode,
 )
 
-tab_kazalniki, tab_trgi, tab_kapacitete = st.tabs(
+tab_kazalniki, tab_trgi, tab_kapacitete, tab_nacionalni_kpi = st.tabs(
     [
         "Kazalniki",
         "Turistični promet in sezonskost po trgih",
         "Nastanitvene kapacitete in struktura kapacitet",
+        "Ključni razvojni in poslovni kazalniki - nacionalna raven",
     ]
 )
 
@@ -318,6 +320,9 @@ with tab_kapacitete:
     else:
         view_title, group_col = next(view for view in views if view[0] == selected_view_label)
     render_accommodation_capacity_structure(view_title, group_col, ctx)
+
+with tab_nacionalni_kpi:
+    render_national_business_indicators()
 
 footer_logo_path = first_existing(
     LOGOS_DIR / FOOTER_LOGO_FILENAME,

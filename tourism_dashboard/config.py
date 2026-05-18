@@ -83,6 +83,9 @@ DASHBOARD_DB_CACHE_TTL_SECONDS = 6 * 60 * 60
 DASHBOARD_MAIN_FRAME_KEY = "main:skupna_tabela"
 DASHBOARD_MARKET_GROWTH_FRAME_KEY = "main:rast_prenocitev_po_trgih"
 DASHBOARD_MAPPING_FRAME_KEY = "mapping:indicator_groups"
+DASHBOARD_NATIONAL_KPI_FRAME_KEY = "national:kpi_long"
+NATIONAL_KPI_XLSX_FILENAME = "Ključni razvojni in poslovni kazalniki - nacionalna raven - formated.xlsx"
+NATIONAL_KPI_SHEET_NAME = "KPI_long"
 
 MARKET_PREFIX = "Delež vseh prenočitev - "
 MARKET_COLOR_MAP = {
