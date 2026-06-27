@@ -534,15 +534,6 @@ def render_year_comparison(
                 )
 
         table = region_agg[[group_col] + indicators].copy()
-        slovenia_table_row = {group_col: "Slovenija"}
-        has_slovenia_table_value = False
-        for indicator in indicators:
-            value = df_slo_total_num.get(indicator, np.nan)
-            slovenia_table_row[indicator] = value
-            if pd.notna(value):
-                has_slovenia_table_value = True
-        if has_slovenia_table_value:
-            table = pd.concat([table, pd.DataFrame([slovenia_table_row])], ignore_index=True)
         table = table.sort_values(latest_indicator, ascending=is_lower_better(latest_indicator), na_position="last")
         rename_map = {str(entry["indicator"]): str(entry["year"]) for entry in entries}
         source_columns = {str(entry["year"]): str(entry["indicator"]) for entry in entries}
@@ -552,6 +543,17 @@ def render_year_comparison(
             indicator = str(entry["indicator"])
             table[year_label] = table[year_label].apply(lambda value, column=indicator: format_indicator_value_tables(column, value))
         table = prefix_rank_to_label_column(table, group_col)
+        slovenia_table_row = {group_col: "Slovenija"}
+        has_slovenia_table_value = False
+        for entry in entries:
+            year_label = str(entry["year"])
+            indicator = str(entry["indicator"])
+            value = df_slo_total_num.get(indicator, np.nan)
+            slovenia_table_row[year_label] = format_indicator_value_tables(indicator, value)
+            if pd.notna(value):
+                has_slovenia_table_value = True
+        if has_slovenia_table_value:
+            table = pd.concat([pd.DataFrame([slovenia_table_row]), table], ignore_index=True)
         st.dataframe(
             streamlit_safe_dataframe(table),
             width="stretch",
