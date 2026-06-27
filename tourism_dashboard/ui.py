@@ -503,19 +503,15 @@ def render_year_comparison(
             chart_areas = [*selected_chart_areas, "Slovenija"] if show_slovenia_in_chart else selected_chart_areas
             chart_plot_df = chart_df[chart_df["Območje"].isin(chart_areas)].copy()
             chart_plot_df["Leto"] = chart_plot_df["Leto"].astype(str)
-            chart_plot_df["Tip"] = chart_plot_df["Območje"].apply(
-                lambda value: "Slovenija" if value == "Slovenija" else "Območje"
-            )
-            fig = px.line(
+            fig = px.bar(
                 chart_plot_df,
                 x="Leto",
                 y="Vrednost",
                 color="Območje",
-                line_dash="Tip",
-                markers=True,
                 custom_data=["Območje", "Prikaz"],
                 labels={"Vrednost": "Vrednost", "Leto": "Leto"},
                 title=f"{metric_spec['label']} - primerjava po letih",
+                barmode="group",
             )
             fig.update_traces(
                 hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>"
@@ -525,7 +521,7 @@ def render_year_comparison(
                 categoryorder="array",
                 categoryarray=[str(entry["year"]) for entry in entries],
             )
-            fig.update_layout(height=430, legend_title_text=view_title)
+            fig.update_layout(height=430, legend_title_text=view_title, bargap=0.22, bargroupgap=0.08)
             st.plotly_chart(fig, use_container_width=True)
             if show_slovenia_in_chart:
                 st.caption(
@@ -622,15 +618,15 @@ def render_year_comparison(
     chart_df = pd.DataFrame(records)
     if not chart_df.empty:
         chart_df["Leto"] = chart_df["Leto"].astype(str)
-        fig = px.line(
+        fig = px.bar(
             chart_df,
             x="Leto",
             y="Vrednost",
             color="Serija",
-            markers=True,
             custom_data=["Serija", "Prikaz"],
             labels={"Vrednost": "Vrednost", "Leto": "Leto"},
             title=f"{metric_spec['label']} - {selected_region}",
+            barmode="group",
         )
         fig.update_traces(
             hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>"
@@ -640,7 +636,7 @@ def render_year_comparison(
             categoryorder="array",
             categoryarray=[str(entry["year"]) for entry in entries],
         )
-        fig.update_layout(height=430)
+        fig.update_layout(height=430, bargap=0.22, bargroupgap=0.08)
         st.plotly_chart(fig, use_container_width=True)
         if not show_slovenia_in_chart:
             st.caption(
@@ -3149,7 +3145,6 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         dash_metric_keys = st.multiselect(
             "Dodatni kazalniki za dashboard in grafe (do 6)",
             dashboard_metric_options,
-            default=[],
             max_selections=6,
             placeholder="Izberi kazalnik",
             key=dash_selector_key,
