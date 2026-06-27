@@ -336,6 +336,7 @@ views = cached_bundle["views"]
 market_cols = cached_bundle["market_cols"]
 indicator_cols = cached_bundle["indicator_cols"]
 agg_rules = cached_bundle["agg_rules"]
+indicator_metadata_df = cached_bundle["indicator_metadata_df"]
 
 default_geojson_path = first_existing(
     DATA_DIR / DISPLAY_GEOJSON_FILENAME,
@@ -372,6 +373,7 @@ ctx = DashboardContext(
     geojson_name_prop=geojson_name_prop,
     grouped_indicators=grouped_indicators,
     agg_rules=agg_rules,
+    indicator_metadata_df=indicator_metadata_df,
     market_cols=market_cols,
     indicator_cols=indicator_cols,
     dashboard_mode=dashboard_mode,

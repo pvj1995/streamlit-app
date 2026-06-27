@@ -280,6 +280,381 @@ def build_all_indicator_options(
     return ordered_indicators
 
 
+def stable_ui_key(value: str) -> str:
+    return hashlib.md5(str(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _metadata_by_indicator(metadata_df: pd.DataFrame | None) -> dict[str, dict[str, Any]]:
+    if metadata_df is None or metadata_df.empty or "indicator" not in metadata_df.columns:
+        return {}
+    rows: dict[str, dict[str, Any]] = {}
+    for _, row in metadata_df.iterrows():
+        indicator = str(row.get("indicator") or "").strip()
+        if indicator:
+            rows[indicator] = row.to_dict()
+    return rows
+
+
+def _catalog_year(value: Any) -> int | None:
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_period_indicator(indicator: str, display_name: str) -> bool:
+    return "{" in str(display_name) or bool(re.search(r"\b(19|20)\d{2}/(19|20)\d{2}\b", str(indicator)))
+
+
+def _indicator_catalog_label(indicator: str, metadata: dict[str, Any]) -> str:
+    display_name = str(metadata.get("display_name") or "").strip()
+    if not display_name or _is_period_indicator(indicator, display_name):
+        return get_indicator_display_name(indicator)
+    return display_name
+
+
+def build_indicator_catalog(
+    indicator_cols: list[str],
+    grouped_filtered: dict[str, list[str]],
+    metadata_df: pd.DataFrame | None,
+) -> dict[str, dict[str, Any]]:
+    metadata_by_indicator = _metadata_by_indicator(metadata_df)
+    indicator_to_group: dict[str, str] = {}
+    for group_name, indicators in grouped_filtered.items():
+        for indicator in indicators:
+            indicator_to_group.setdefault(indicator, group_name)
+
+    catalog: dict[str, dict[str, Any]] = {}
+    for indicator in build_all_indicator_options(indicator_cols, grouped_filtered):
+        metadata = metadata_by_indicator.get(indicator, {})
+        label = _indicator_catalog_label(indicator, metadata)
+        metric_id = str(metadata.get("metric_id") or "").strip()
+        year = _catalog_year(metadata.get("year"))
+
+        if _is_period_indicator(indicator, str(metadata.get("display_name") or "")):
+            metric_key = f"indicator::{indicator}"
+            year = None
+        else:
+            metric_key = f"metric::{metric_id or label}"
+
+        entry = {
+            "indicator": indicator,
+            "year": year,
+            "label": label,
+            "group": indicator_to_group.get(indicator, ""),
+        }
+        if metric_key not in catalog:
+            catalog[metric_key] = {
+                "key": metric_key,
+                "label": label,
+                "group": indicator_to_group.get(indicator, ""),
+                "entries": [],
+            }
+        existing_indicators = {item["indicator"] for item in catalog[metric_key]["entries"]}
+        if indicator not in existing_indicators:
+            catalog[metric_key]["entries"].append(entry)
+
+    for spec in catalog.values():
+        spec["entries"] = sorted(
+            spec["entries"],
+            key=lambda item: (
+                item["year"] is None,
+                item["year"] if item["year"] is not None else 9999,
+                str(item["indicator"]),
+            ),
+        )
+    return catalog
+
+
+def metric_options_for_indicators(
+    catalog: dict[str, dict[str, Any]],
+    indicators: list[str],
+) -> list[str]:
+    indicator_set = set(indicators)
+    return [
+        key
+        for key, spec in catalog.items()
+        if any(entry["indicator"] in indicator_set for entry in spec["entries"])
+    ]
+
+
+def format_metric_option_label(metric_key: str, catalog: dict[str, dict[str, Any]]) -> str:
+    spec = catalog[metric_key]
+    group_name = str(spec.get("group") or "")
+    emoji = GROUP_COLOR_EMOJI[group_name] if group_name in GROUP_COLOR_EMOJI else "•"
+    return f"{emoji} {spec['label']}"
+
+
+def available_year_entries(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        entry
+        for entry in spec.get("entries", [])
+        if entry.get("year") is not None
+    ]
+
+
+def latest_indicator_entry(spec: dict[str, Any]) -> dict[str, Any]:
+    entries = list(spec.get("entries", []))
+    year_entries = available_year_entries(spec)
+    if year_entries:
+        return year_entries[-1]
+    return entries[-1]
+
+
+def indicator_entry_for_year(spec: dict[str, Any], year: int | None) -> dict[str, Any]:
+    if year is not None:
+        for entry in spec.get("entries", []):
+            if entry.get("year") == year:
+                return entry
+    return latest_indicator_entry(spec)
+
+
+def resolve_metric_indicator_for_year(
+    metric_key: str,
+    catalog: dict[str, dict[str, Any]],
+    preferred_year: int | None,
+) -> str:
+    return str(indicator_entry_for_year(catalog[metric_key], preferred_year)["indicator"])
+
+
+def render_year_comparison(
+    *,
+    metric_spec: dict[str, Any],
+    selected_region: str,
+    group_col: str,
+    view_title: str,
+    numeric_df: pd.DataFrame,
+    regions: list[str],
+    df_slo_total_num: pd.Series,
+    agg_rules: dict[str, tuple[str, str | None]],
+) -> None:
+    entries = available_year_entries(metric_spec)
+    if len(entries) < 2:
+        st.info("Za izbrani kazalnik je na voljo samo eno leto.")
+        return
+
+    indicators = [str(entry["indicator"]) for entry in entries]
+    show_slovenia_in_chart = not any(
+        get_indicator_aggregation_method(indicator, agg_rules) == "sum"
+        for indicator in indicators
+    )
+    st.subheader(f"Primerjava po letih - {metric_spec['label']}")
+
+    region_agg = compute_region_aggregates(numeric_df, regions, indicators, agg_rules, group_col=group_col)
+
+    if selected_region == "Vsa območja":
+        records: list[dict[str, Any]] = []
+        for _, row in region_agg.iterrows():
+            area_name = str(row[group_col])
+            for entry in entries:
+                indicator = str(entry["indicator"])
+                value = row.get(indicator, np.nan)
+                if pd.isna(value):
+                    continue
+                records.append(
+                    {
+                        "Območje": area_name,
+                        "Leto": int(entry["year"]),
+                        "Vrednost": float(value),
+                        "Prikaz": format_indicator_value_map(indicator, value),
+                    }
+                )
+        if show_slovenia_in_chart:
+            for entry in entries:
+                indicator = str(entry["indicator"])
+                value = df_slo_total_num.get(indicator, np.nan)
+                if pd.isna(value):
+                    continue
+                records.append(
+                    {
+                        "Območje": "Slovenija",
+                        "Leto": int(entry["year"]),
+                        "Vrednost": float(value),
+                        "Prikaz": format_indicator_value_map(indicator, value),
+                    }
+                )
+
+        latest_indicator = indicators[-1]
+        chart_df = pd.DataFrame(records)
+        if not chart_df.empty:
+            ranked_area_options = (
+                region_agg[[group_col, latest_indicator]]
+                .dropna(subset=[latest_indicator])
+                .sort_values(latest_indicator, ascending=is_lower_better(latest_indicator), na_position="last")[group_col]
+                .astype(str)
+                .tolist()
+            )
+            default_chart_areas = ranked_area_options[: min(6, len(ranked_area_options))]
+            selected_chart_areas = st.multiselect(
+                "Območja za graf",
+                ranked_area_options,
+                default=default_chart_areas,
+                max_selections=8,
+                key=f"year_compare_areas_{group_col}_{stable_ui_key('|'.join(indicators))}",
+            )
+            if not selected_chart_areas:
+                selected_chart_areas = default_chart_areas
+
+            chart_areas = [*selected_chart_areas, "Slovenija"] if show_slovenia_in_chart else selected_chart_areas
+            chart_plot_df = chart_df[chart_df["Območje"].isin(chart_areas)].copy()
+            chart_plot_df["Leto"] = chart_plot_df["Leto"].astype(str)
+            chart_plot_df["Tip"] = chart_plot_df["Območje"].apply(
+                lambda value: "Slovenija" if value == "Slovenija" else "Območje"
+            )
+            fig = px.line(
+                chart_plot_df,
+                x="Leto",
+                y="Vrednost",
+                color="Območje",
+                line_dash="Tip",
+                markers=True,
+                custom_data=["Območje", "Prikaz"],
+                labels={"Vrednost": "Vrednost", "Leto": "Leto"},
+                title=f"{metric_spec['label']} - primerjava po letih",
+            )
+            fig.update_traces(
+                hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>"
+            )
+            fig.update_xaxes(
+                type="category",
+                categoryorder="array",
+                categoryarray=[str(entry["year"]) for entry in entries],
+            )
+            fig.update_layout(height=430, legend_title_text=view_title)
+            st.plotly_chart(fig, use_container_width=True)
+            if show_slovenia_in_chart:
+                st.caption(
+                    "Graf prikazuje izbrana območja in Slovenijo. Celotna razvrstitev vseh območij je v tabeli spodaj."
+                )
+            else:
+                st.caption(
+                    "Graf prikazuje izbrana območja. Pri seštevnih kazalnikih Slovenija ni dodana v graf, "
+                    "ker nacionalni seštevek popači merilo; celotna razvrstitev je v tabeli spodaj."
+                )
+
+        table = region_agg[[group_col] + indicators].copy()
+        table = table.sort_values(latest_indicator, ascending=is_lower_better(latest_indicator), na_position="last")
+        rename_map = {str(entry["indicator"]): str(entry["year"]) for entry in entries}
+        source_columns = {str(entry["year"]): str(entry["indicator"]) for entry in entries}
+        table = table.rename(columns=rename_map)
+        for entry in entries:
+            year_label = str(entry["year"])
+            indicator = str(entry["indicator"])
+            table[year_label] = table[year_label].apply(lambda value, column=indicator: format_indicator_value_tables(column, value))
+        table = prefix_rank_to_label_column(table, group_col)
+        st.dataframe(
+            streamlit_safe_dataframe(table),
+            width="stretch",
+            hide_index=True,
+            column_config=make_localized_column_config(
+                table,
+                source_columns=source_columns,
+                width_overrides={group_col: "large"},
+            ),
+        )
+        return
+
+    selected_row = region_agg[region_agg[group_col] == selected_region]
+    if selected_row.empty:
+        st.info("Za izbrano območje ni podatkov za primerjavo po letih.")
+        return
+
+    selected_row = selected_row.iloc[0]
+    kpi_cols = st.columns(min(len(entries), 4))
+    for idx, entry in enumerate(entries[:4]):
+        indicator = str(entry["indicator"])
+        with kpi_cols[idx]:
+            st.metric(
+                str(entry["year"]),
+                format_indicator_value_map(indicator, selected_row.get(indicator, np.nan)),
+                build_slovenia_metric_delta(
+                    indicator,
+                    float(selected_row.get(indicator, np.nan)),
+                    df_slo_total_num.get(indicator, np.nan),
+                    agg_rules,
+                ),
+            )
+
+    records = []
+    table_rows = []
+    for entry in entries:
+        indicator = str(entry["indicator"])
+        year = int(entry["year"])
+        area_value = selected_row.get(indicator, np.nan)
+        slovenia_value = df_slo_total_num.get(indicator, np.nan)
+        if pd.notna(area_value):
+            records.append(
+                {
+                    "Serija": selected_region,
+                    "Leto": year,
+                    "Vrednost": float(area_value),
+                    "Prikaz": format_indicator_value_map(indicator, area_value),
+                }
+            )
+        if show_slovenia_in_chart and pd.notna(slovenia_value):
+            records.append(
+                {
+                    "Serija": "Slovenija",
+                    "Leto": year,
+                    "Vrednost": float(slovenia_value),
+                    "Prikaz": format_indicator_value_map(indicator, slovenia_value),
+                }
+            )
+        index_value = (
+            (float(area_value) / float(slovenia_value)) * 100.0
+            if pd.notna(area_value) and pd.notna(slovenia_value) and float(slovenia_value) != 0
+            else np.nan
+        )
+        table_rows.append(
+            {
+                "Leto": year,
+                "Vrednost območja": format_indicator_value_map(indicator, area_value),
+                "Slovenija": format_indicator_value_map(indicator, slovenia_value),
+                "Indeks Slovenija = 100": format_si_number(index_value, 1) if pd.notna(index_value) else "—",
+            }
+        )
+
+    chart_df = pd.DataFrame(records)
+    if not chart_df.empty:
+        chart_df["Leto"] = chart_df["Leto"].astype(str)
+        fig = px.line(
+            chart_df,
+            x="Leto",
+            y="Vrednost",
+            color="Serija",
+            markers=True,
+            custom_data=["Serija", "Prikaz"],
+            labels={"Vrednost": "Vrednost", "Leto": "Leto"},
+            title=f"{metric_spec['label']} - {selected_region}",
+        )
+        fig.update_traces(
+            hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>"
+        )
+        fig.update_xaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=[str(entry["year"]) for entry in entries],
+        )
+        fig.update_layout(height=430)
+        st.plotly_chart(fig, use_container_width=True)
+        if not show_slovenia_in_chart:
+            st.caption(
+                "Pri seštevnih kazalnikih Slovenija ni dodana v graf, ker nacionalni seštevek popači merilo. "
+                "Primerjava s Slovenijo ostane prikazana v KPI-jih in tabeli."
+            )
+
+    st.dataframe(
+        streamlit_safe_dataframe(pd.DataFrame(table_rows)),
+        width="stretch",
+        hide_index=True,
+    )
+
+
 def build_group_selector_specs(
     indicator_cols: list[str],
     grouped_filtered: dict[str, list[str]],
@@ -2682,6 +3057,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     indicator_cols = ctx.indicator_cols
     grouped_filtered, indicator_to_group = build_filtered_indicator_groups(indicator_cols, ctx.grouped_indicators)
     all_indicator_options = build_all_indicator_options(indicator_cols, grouped_filtered)
+    indicator_catalog = build_indicator_catalog(indicator_cols, grouped_filtered, ctx.indicator_metadata_df)
 
     df_regions = ctx.numeric_df[ctx.numeric_df[group_col].notna()].copy()
     regions = sorted(df_regions[group_col].dropna().unique().tolist())
@@ -2706,32 +3082,83 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     )
     if not group_indicator_cols:
         group_indicator_cols = all_indicator_options
+    metric_options = metric_options_for_indicators(indicator_catalog, group_indicator_cols)
+    if not metric_options:
+        st.info("Za izbrano skupino ni kazalnikov.")
+        return
 
     with map_indicator_col:
         st.markdown("<div style='min-height: 10rem;'></div>", unsafe_allow_html=True)
-        map_indicator = st.selectbox(
-            "Glavni Kazalnik za zemljevid in grafe",
-            group_indicator_cols,
+        metric_selector_key = f"sel_metric_{group_col}"
+        if st.session_state.get(metric_selector_key) not in metric_options:
+            st.session_state[metric_selector_key] = metric_options[0]
+        selected_metric_key = st.selectbox(
+            "Glavni kazalnik",
+            metric_options,
             index=0,
-            key=f"sel_ind_{group_col}",
-            format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
+            key=metric_selector_key,
+            format_func=lambda metric_key: format_metric_option_label(metric_key, indicator_catalog),
         )
+        selected_metric_spec = indicator_catalog[selected_metric_key]
+        selected_year_entries = available_year_entries(selected_metric_spec)
+        selected_year: int | None = None
+        comparison_mode = "Posamično leto"
+        if len(selected_year_entries) > 1:
+            comparison_mode = st.radio(
+                "Prikaz",
+                ["Primerjava po letih", "Posamično leto"],
+                horizontal=True,
+                key=f"metric_mode_{group_col}_{stable_ui_key(selected_metric_key)}",
+            )
+        if comparison_mode == "Posamično leto" and selected_year_entries:
+            selected_year = st.selectbox(
+                "Leto",
+                [int(entry["year"]) for entry in selected_year_entries],
+                index=len(selected_year_entries) - 1,
+                key=f"metric_year_{group_col}_{stable_ui_key(selected_metric_key)}",
+            )
+
+        map_indicator = resolve_metric_indicator_for_year(selected_metric_key, indicator_catalog, selected_year)
         show_shared_warning_if_needed_indicator(map_indicator)
+
+    if comparison_mode == "Primerjava po letih":
+        render_year_comparison(
+            metric_spec=selected_metric_spec,
+            selected_region=selected_region,
+            group_col=group_col,
+            view_title=view_title,
+            numeric_df=numeric_df,
+            regions=regions,
+            df_slo_total_num=df_slo_total_num,
+            agg_rules=ctx.agg_rules,
+        )
+        return
 
     map_reverse_color_scale = False
     map_color_direction = "higher_value"
 
     dash_inds = []
     if ctx.dashboard_mode:
-        dash_inds = st.multiselect(
+        dashboard_metric_options = [metric_key for metric_key in metric_options if metric_key != selected_metric_key]
+        dash_selector_key = f"dash_{group_col}"
+        previous_dash_keys = st.session_state.get(dash_selector_key, [])
+        if previous_dash_keys:
+            st.session_state[dash_selector_key] = [
+                metric_key for metric_key in previous_dash_keys if metric_key in dashboard_metric_options
+            ]
+        dash_metric_keys = st.multiselect(
             "Dodatni kazalniki za dashboard in grafe (do 6)",
-            group_indicator_cols,
-            default=group_indicator_cols[:0] if len(group_indicator_cols) >= 4 else group_indicator_cols,
+            dashboard_metric_options,
+            default=[],
             max_selections=6,
             placeholder="Izberi kazalnik",
-            key=f"dash_{group_col}",
-            format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
+            key=dash_selector_key,
+            format_func=lambda metric_key: format_metric_option_label(metric_key, indicator_catalog),
         )
+        dash_inds = [
+            resolve_metric_indicator_for_year(metric_key, indicator_catalog, selected_year)
+            for metric_key in dash_metric_keys
+        ]
 
     agg_needed = [map_indicator] + [indicator for indicator in dash_inds if indicator != map_indicator]
     region_agg = compute_region_aggregates(numeric_df, regions, agg_needed, ctx.agg_rules, group_col=group_col)

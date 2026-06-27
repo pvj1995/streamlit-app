@@ -193,6 +193,17 @@ spremembe vidne takoj.
 3. Zaženite uvoz v bazo.
 4. Preverite vsaj en zemljevid, eno tabelo in en izbran kazalnik.
 
+### Primerjava Kazalnikov Po Letih
+
+V zavihku `Kazalniki` aplikacija kazalnike z več leti združi pod eno ime brez letnice. Če ima
+kazalnik več razpoložljivih let, lahko izberete:
+
+- `Primerjava po letih`: trend izbranega kazalnika po letih
+- `Posamično leto`: zemljevid, tabele in grafi za izbrano leto
+
+Če ima kazalnik samo eno leto ali gre za primerjalno obdobje, se prikaže kot običajen posamični
+kazalnik.
+
 ### Posodobitev Tržnih In Sezonskih Podatkov
 
 Uredite ustrezno datoteko:
