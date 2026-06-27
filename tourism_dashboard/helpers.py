@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from tourism_dashboard.config import DATA_XLSX_FILENAME
+from tourism_dashboard.config import YEARLY_INDICATOR_XLSX_FILENAME
 from tourism_dashboard.paths import BASE_DIR, DATA_DIR, first_existing
 
 
@@ -18,27 +18,12 @@ except Exception:
 
 
 def find_excel_file() -> Path | None:
-    default_path = first_existing(
-        DATA_DIR / DATA_XLSX_FILENAME,
-        BASE_DIR / DATA_XLSX_FILENAME,
+    yearly_path = first_existing(
+        DATA_DIR / YEARLY_INDICATOR_XLSX_FILENAME,
+        BASE_DIR / YEARLY_INDICATOR_XLSX_FILENAME,
     )
-    if default_path.exists():
-        return default_path
-
-    search_dirs = [DATA_DIR, BASE_DIR]
-    for directory in search_dirs:
-        candidates = [
-            candidate
-            for candidate in directory.glob("*.xlsx")
-            if not candidate.name.startswith("~$")
-        ]
-        if not candidates:
-            continue
-        for candidate in candidates:
-            name = candidate.name.lower()
-            if "skupna" in name and "tabela" in name:
-                return candidate
-        return candidates[0]
+    if yearly_path.exists():
+        return yearly_path
     return None
 
 
@@ -437,7 +422,7 @@ def try_load_geojson(path: Path):
 
 
 @st.cache_data(show_spinner=False)
-def load_indicator_groups(path: Path) -> dict[str, list[str]]:
+def load_indicator_groups() -> dict[str, list[str]]:
     from tourism_dashboard.database import (
         database_has_dashboard_frames,
         get_dashboard_connection_name,
@@ -448,20 +433,22 @@ def load_indicator_groups(path: Path) -> dict[str, list[str]]:
     if is_database_backend_enabled() and database_has_dashboard_frames(get_dashboard_connection_name()):
         return load_indicator_groups_from_db()
 
-    if not path.exists():
-        return {}
-    try:
-        df_map = pd.read_excel(path)
-    except Exception:
-        return {}
+    yearly_path = first_existing(
+        DATA_DIR / YEARLY_INDICATOR_XLSX_FILENAME,
+        BASE_DIR / YEARLY_INDICATOR_XLSX_FILENAME,
+    )
+    if yearly_path.exists():
+        try:
+            from tourism_dashboard.yearly_workbook import (
+                build_indicator_groups_from_mapping_dataframe,
+                load_yearly_dashboard_frames,
+            )
 
-    groups: dict[str, list[str]] = {}
-    for column in df_map.columns:
-        series = df_map[column].dropna().astype(str).str.strip()
-        values = [value for value in series.tolist() if value]
-        if values:
-            groups[column] = values
-    return groups
+            yearly_frames = load_yearly_dashboard_frames(yearly_path)
+            return build_indicator_groups_from_mapping_dataframe(yearly_frames.mapping_df)
+        except Exception:
+            pass
+    return {}
 
 
 @st.cache_data(show_spinner=False)

@@ -61,10 +61,12 @@ streamlit app/
 
 Required source files:
 
-- `data/Skupna tabela občine.xlsx`
-  - sheet `Skupna Tabela`
-  - sheet `Rast prenočitev po trgih`
-- `data/mapping.xlsx`
+- `data/yearly_indicator_input_draft.xlsx`
+  - `metrics`: stable metric definitions, labels, groups, formatting hints
+  - `metric_year_rules`: one row per available metric/year, aggregation rule, optional visible `source_column`
+  - `derived_metrics`: comparison indicators calculated from yearly metric IDs
+  - `Y2019`, `Y2024`, `Y2025`, ...: one sheet per year, with metric IDs as columns
+  - `market_overnights_by_market`: market overnight data used to rebuild market growth views
 - `data/si.json`
 - `data/si_display.json`
 
@@ -90,7 +92,8 @@ DATA_BACKEND = "excel"
 ```
 
 In this mode the app reads files from `data/` directly. This is useful for local development,
-debugging, or when no database is configured.
+debugging, or when no database is configured. The runtime expects the new yearly workbook format;
+the old `Skupna tabela` + `mapping.xlsx` workflow is no longer used by the app.
 
 ### Database Mode
 
@@ -187,9 +190,15 @@ Run:
 python scripts/import_excel_to_db.py
 ```
 
+To validate all frames without touching Supabase:
+
+```bash
+python scripts/import_excel_to_db.py --dry-run
+```
+
 The importer:
 
-1. reads all supported Excel files from `data/`
+1. reads `data/yearly_indicator_input_draft.xlsx` and the supported secondary Excel files from `data/`
 2. parses them using the same helper functions as the app
 3. creates the database schema if missing
 4. replaces current imported frames
@@ -211,12 +220,17 @@ optimized as a runtime mirror of the Excel source files, not as a friendly manua
 
 ### Add or Remove an Indicator
 
-1. Edit `data/Skupna tabela občine.xlsx`, sheet `Skupna Tabela`.
-2. Add or remove the exact indicator label in `data/mapping.xlsx`.
-3. If needed, update `AGG_RULES` in [tourism_dashboard/config.py](./tourism_dashboard/config.py).
-4. If lower values are better, update `LOWER_IS_BETTER_INDICATORS`.
-5. If the indicator needs special formatting or warnings, update the matching config lists.
-6. Run:
+1. Edit `data/yearly_indicator_input_draft.xlsx`.
+2. Add or update the stable metric in `metrics`. Keep `metric_id` stable once the metric exists.
+3. Add the year values in the matching `Y####` sheet using the same `metric_id` as the column name.
+4. Add or update the row in `metric_year_rules`.
+5. Leave `source_column` blank for the normal label pattern `metrics.display_name + " " + year`; fill it only when the visible label must be exact or must not get a year suffix.
+6. Set grouping in `metrics.group` or `metric_year_rules.group`; `legacy_mapping` is no longer used.
+7. Set `aggregation_method`. Use `sum` for additive totals and `wmean`/`mean` for rates, averages, indexes, and ratios.
+8. For `wmean`, set `weight_metric_id` and `weight_year` where appropriate.
+9. Set `unit`, `format_type`, `decimal_places`, `selectable`, and `lower_is_better` in the workbook metadata.
+10. For comparison indicators such as 2025/2024, add a row in `derived_metrics`.
+11. Run:
 
 ```bash
 python scripts/import_excel_to_db.py
@@ -224,14 +238,14 @@ python scripts/import_excel_to_db.py
 
 ### Update Municipality or Area Values
 
-1. Edit values in `data/Skupna tabela občine.xlsx`.
-2. Keep the `Občine` and `Turistična regija` columns intact.
+1. Edit values in the relevant `Y####` sheet in `data/yearly_indicator_input_draft.xlsx`.
+2. Keep `area_id` intact and do not rename metric ID columns unless you also update metadata.
 3. Run the importer.
 
 ### Update Market Growth
 
-1. Edit `data/Skupna tabela občine.xlsx`, sheet `Rast prenočitev po trgih`.
-2. Preserve column naming like `Število nočitev 2025 - Domači trg`.
+1. Edit `market_overnights_by_market` in `data/yearly_indicator_input_draft.xlsx`.
+2. Preserve `area_id`, `year`, `market`, `overnights`, and `source_column`.
 3. Run the importer.
 
 ### Update Monthly Market Files
@@ -312,15 +326,14 @@ Most behavior is controlled from [tourism_dashboard/config.py](./tourism_dashboa
 - database backend constants
 - market labels and colors
 - territorial view candidates
-- aggregation rules
 - top/bottom limits
-- lower-is-better indicators
-- formatting lists
 - warning lists
 
 ## Aggregation Model
 
-Aggregation rules are defined in `AGG_RULES`.
+Aggregation rules are defined in `data/yearly_indicator_input_draft.xlsx`, primarily in
+`metric_year_rules` and `derived_metrics`. The import script exports them to the database frame
+`metadata:aggregation_rules`, and the app uses the same rules in Excel and database modes.
 
 Supported modes:
 
@@ -328,13 +341,8 @@ Supported modes:
 - `mean`: simple averages
 - `wmean`: weighted averages
 
-Example:
-
-```python
-"Delež tujih prenočitev - 2025": ("wmean", "Prenočitve turistov SKUPAJ - 2025")
-```
-
-That means municipality percentages are weighted by total overnight stays instead of being summed.
+For `wmean`, use `weight_metric_id` and `weight_year` to point to the denominator/weight metric.
+This keeps new years maintainable because the app resolves the display column from metric IDs.
 
 ## Top/Bottom Methodology
 
@@ -349,7 +357,7 @@ Important configuration:
 
 - `TOP_BOTTOM_GROUP_LIMITS`
 - `TOP_BOTTOM_EXCLUDED_INDICATORS`
-- `LOWER_IS_BETTER_INDICATORS`
+- `lower_is_better` in the yearly workbook metadata
 - `get_sum_comparison_base()` in [tourism_dashboard/analytics.py](./tourism_dashboard/analytics.py)
 
 ## AI Commentary
@@ -442,8 +450,11 @@ Without a restart or cache clear, imported dashboard data can remain cached for 
 
 Check:
 
-- exact column name in `Skupna Tabela`
-- exact label in `mapping.xlsx`
+- the metric exists in `metrics`
+- the year-specific row exists in `metric_year_rules`
+- `source_column` is blank for default naming or matches the exact visible label you expect
+- the matching `Y####` sheet contains the `metric_id` column
+- the metric has a group in `metrics.group` or `metric_year_rules.group`
 - whether the indicator is excluded from top/bottom
 - whether the selected group contains that indicator
 

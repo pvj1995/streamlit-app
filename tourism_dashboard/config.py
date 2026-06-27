@@ -34,10 +34,13 @@ FOOTER_AUTHOR_TEXT = (
     "d.o.o., kontakt: info@hosting.si, tel. +386 (0)41 514 020"
 )
 
+YEARLY_INDICATOR_XLSX_FILENAME = "yearly_indicator_input_draft.xlsx"
+# Legacy filenames kept for the one-off migration helper
+# `scripts/generate_yearly_indicator_workbook.py`.
 DATA_XLSX_FILENAME = "Skupna tabela občine.xlsx"
+MAPPING_XLSX_FILENAME = "mapping.xlsx"
 GEOJSON_FILENAME = "si.json"
 DISPLAY_GEOJSON_FILENAME = "si_display.json"
-MAPPING_XLSX_FILENAME = "mapping.xlsx"
 TITLE_FALLBACK_FILENAME = "Title.jpg"
 AI_ICON_FILENAME = "AI image.png"
 AI_BANNER_FILENAME = "Banner AI analizy.jpg"
@@ -93,13 +96,15 @@ AI_CACHE_CONNECTION_NAME_DEFAULT = "ai_cache_db"
 AI_CACHE_TABLE_NAME = "ai_commentary_cache"
 AI_CACHE_SCHEMA_TTL_SECONDS = 6 * 60 * 60
 
-DATA_BACKEND_DEFAULT = "excel"
+DATA_BACKEND_DEFAULT = "database"
 DASHBOARD_DB_CONNECTION_NAME_DEFAULT = "ai_cache_db"
 DASHBOARD_DB_SCHEMA_VERSION = "2026-04-21-frame-v1"
 DASHBOARD_DB_CACHE_TTL_SECONDS = 6 * 60 * 60
 DASHBOARD_MAIN_FRAME_KEY = "main:skupna_tabela"
 DASHBOARD_MARKET_GROWTH_FRAME_KEY = "main:rast_prenocitev_po_trgih"
 DASHBOARD_MAPPING_FRAME_KEY = "mapping:indicator_groups"
+DASHBOARD_AGG_RULES_FRAME_KEY = "metadata:aggregation_rules"
+DASHBOARD_INDICATOR_METADATA_FRAME_KEY = "metadata:indicator_formatting"
 DASHBOARD_NATIONAL_KPI_FRAME_KEY = "national:kpi_long"
 DASHBOARD_COMPASS_FRAME_PREFIX = "compass"
 NATIONAL_KPI_XLSX_FILENAME = "Ključni razvojni in poslovni kazalniki - nacionalna raven - formated.xlsx"
@@ -141,6 +146,9 @@ VIEW_CANDIDATES = [
     ("Perspektivne destinacije", ["perspektivna destinacija", "perspektivne destinacije"]),
 ]
 
+# Legacy/default aggregation map. The active yearly workflow stores aggregation
+# rules in `yearly_indicator_input_draft.xlsx`; this map remains as a fallback
+# for migration helpers and older special-case calculations.
 AGG_RULES = {
     "Površina območja (km2)": ("sum", None),
     "Število prebivalcev (H2/2024)": ("sum", None),
@@ -519,6 +527,8 @@ INDIKATORJI_Z_VALUTO = {
     "Povprečna ekonomska velikost kmetijskih gospodarstev",
 }
 
+# Compatibility fallback. New indicators should define this in the yearly
+# workbook metadata (`lower_is_better`), which is also imported to Supabase.
 LOWER_IS_BETTER_INDICATORS = {
     "Povprečna starost prebivalcev 2024",
     "Povprečna starost prebivalcev 2025",

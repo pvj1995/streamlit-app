@@ -9,33 +9,35 @@ from tourism_dashboard.auth import require_password
 from tourism_dashboard.assets import render_page_header
 from tourism_dashboard.config import (
     COMPASS_INDEX_LOGO_FILENAME,
-    DATA_XLSX_FILENAME,
+    DASHBOARD_AGG_RULES_FRAME_KEY,
+    DASHBOARD_INDICATOR_METADATA_FRAME_KEY,
+    DASHBOARD_MAIN_FRAME_KEY,
+    DASHBOARD_MAPPING_FRAME_KEY,
+    DASHBOARD_MARKET_GROWTH_FRAME_KEY,
     DISPLAY_GEOJSON_FILENAME,
     FOOTER_AUTHOR_TEXT,
     FOOTER_LOGO_FILENAME,
     FOOTER_SOURCE_TEXT,
     GEOJSON_FILENAME,
     HIDDEN_SELECTABLE_INDICATORS,
-    MAPPING_XLSX_FILENAME,
     MARKET_PREFIX,
     PAGE_TITLE,
     VIEW_CANDIDATES,
+    YEARLY_INDICATOR_XLSX_FILENAME,
     YEAR_NOTE_TEXT,
 )
 from tourism_dashboard.database import (
     database_has_dashboard_frames,
     get_dashboard_connection_name,
     is_database_backend_enabled,
+    load_core_dashboard_frames_from_db,
     load_dashboard_data_signature,
-    load_main_dataframe_from_db,
-    load_market_growth_dataframe_from_db,
 )
+from tourism_dashboard.formatting import set_indicator_format_metadata
 from tourism_dashboard.helpers import (
     build_numeric_dataframe,
     find_col,
     find_excel_file,
-    load_excel_from_bytes,
-    load_excel_from_path,
     load_geojson_from_upload_or_file,
     load_indicator_groups,
     normalize_name,
@@ -43,6 +45,12 @@ from tourism_dashboard.helpers import (
 from tourism_dashboard.maps import get_geojson_name_prop
 from tourism_dashboard.models import DashboardContext
 from tourism_dashboard.paths import BASE_DIR, DATA_DIR, LOGOS_DIR, first_existing
+from tourism_dashboard.yearly_workbook import (
+    aggregation_rules_from_dataframe,
+    build_indicator_groups_from_mapping_dataframe,
+    is_yearly_indicator_workbook,
+    load_yearly_dashboard_frames,
+)
 from tourism_dashboard.ui import (
     render_accommodation_capacity_structure,
     render_compass_destination_index,
@@ -52,22 +60,14 @@ from tourism_dashboard.ui import (
     render_view,
 )
 
-MAIN_SHEET_NAME = "Skupna Tabela"
-MARKET_GROWTH_SHEET_NAME = "Rast prenočitev po trgih"
-
-
-def load_optional_sheet_from_bytes(raw_bytes: bytes, sheet_name: str) -> pd.DataFrame | None:
-    try:
-        return load_excel_from_bytes(raw_bytes, sheet_name=sheet_name)
-    except Exception:
-        return None
-
-
-def load_optional_sheet_from_path(path: Path, sheet_name: str) -> pd.DataFrame | None:
-    try:
-        return load_excel_from_path(str(path), sheet_name=sheet_name)
-    except Exception:
-        return None
+SourceFramesResult = tuple[
+    str | None,
+    pd.DataFrame | None,
+    pd.DataFrame | None,
+    pd.DataFrame | None,
+    dict[str, tuple[str, str | None]],
+    pd.DataFrame,
+]
 
 
 def build_upload_signature(raw_bytes: bytes) -> str:
@@ -84,21 +84,45 @@ def build_path_signature(path: Path | None) -> str | None:
 def load_source_dataframes(
     uploaded_file: Any,
     default_path: Path | None,
-) -> tuple[str | None, pd.DataFrame | None, pd.DataFrame | None]:
+) -> SourceFramesResult:
     if uploaded_file is not None:
         raw_bytes = uploaded_file.getvalue()
         signature = build_upload_signature(raw_bytes)
-        main_df = load_excel_from_bytes(raw_bytes, sheet_name=MAIN_SHEET_NAME)
-        growth_df = load_optional_sheet_from_bytes(raw_bytes, MARKET_GROWTH_SHEET_NAME)
-        return signature, main_df, growth_df
+        if not is_yearly_indicator_workbook(raw_bytes):
+            st.error(
+                "Naložena Excel datoteka ni v novem yearly formatu. "
+                "Uporabi workbook z listi `metrics`, `metric_year_rules`, `areas` in `Y####`."
+            )
+            st.stop()
+        yearly_frames = load_yearly_dashboard_frames(raw_bytes)
+        return (
+            signature,
+            yearly_frames.main_df,
+            yearly_frames.market_growth_df,
+            yearly_frames.mapping_df,
+            yearly_frames.agg_rules,
+            yearly_frames.indicator_metadata_df,
+        )
 
     if default_path is None or not default_path.exists():
-        return None, None, None
+        return None, None, None, None, {}, pd.DataFrame()
 
     signature = build_path_signature(default_path)
-    main_df = load_excel_from_path(str(default_path), sheet_name=MAIN_SHEET_NAME)
-    growth_df = load_optional_sheet_from_path(default_path, MARKET_GROWTH_SHEET_NAME)
-    return signature, main_df, growth_df
+    if not is_yearly_indicator_workbook(default_path):
+        st.error(
+            f"Privzeti Excel `{default_path.name}` ni v novem yearly formatu. "
+            f"Pričakovana datoteka je `{YEARLY_INDICATOR_XLSX_FILENAME}`."
+        )
+        st.stop()
+    yearly_frames = load_yearly_dashboard_frames(default_path)
+    return (
+        signature,
+        yearly_frames.main_df,
+        yearly_frames.market_growth_df,
+        yearly_frames.mapping_df,
+        yearly_frames.agg_rules,
+        yearly_frames.indicator_metadata_df,
+    )
 
 
 def is_configured_database_backend_ready() -> bool:
@@ -111,19 +135,24 @@ def is_configured_database_backend_ready() -> bool:
 def load_configured_source_dataframes(
     uploaded_file: Any,
     default_path: Path | None,
-) -> tuple[str | None, pd.DataFrame | None, pd.DataFrame | None]:
+    database_backend_ready: bool,
+) -> SourceFramesResult:
     database_backend_requested = is_database_backend_enabled()
     database_connection_name = get_dashboard_connection_name()
-    database_backend_ready = (
-        database_backend_requested
-        and database_has_dashboard_frames(database_connection_name)
-    )
 
     if uploaded_file is None and database_backend_ready:
+        db_frames = load_core_dashboard_frames_from_db()
+        market_growth_df = db_frames.get(DASHBOARD_MARKET_GROWTH_FRAME_KEY, pd.DataFrame())
         return (
             load_dashboard_data_signature(database_connection_name),
-            load_main_dataframe_from_db(),
-            load_market_growth_dataframe_from_db(),
+            db_frames.get(DASHBOARD_MAIN_FRAME_KEY),
+            None if market_growth_df.empty else market_growth_df,
+            db_frames.get(DASHBOARD_MAPPING_FRAME_KEY),
+            aggregation_rules_from_dataframe(
+                db_frames.get(DASHBOARD_AGG_RULES_FRAME_KEY, pd.DataFrame()),
+                include_defaults=False,
+            ),
+            db_frames.get(DASHBOARD_INDICATOR_METADATA_FRAME_KEY, pd.DataFrame()),
         )
 
     if uploaded_file is None and database_backend_requested and not database_backend_ready:
@@ -139,7 +168,10 @@ def build_data_bundle(
     raw_df: pd.DataFrame,
     raw_market_growth_df: pd.DataFrame | None,
     source_signature: str,
+    agg_rules: dict[str, tuple[str, str | None]],
+    indicator_metadata_df: pd.DataFrame,
 ) -> dict[str, Any]:
+    set_indicator_format_metadata(indicator_metadata_df)
     df = raw_df.copy()
     df["__obcina_norm__"] = df["Občine"].apply(normalize_name)
 
@@ -195,6 +227,8 @@ def build_data_bundle(
         "views": views,
         "market_cols": market_cols,
         "indicator_cols": indicator_cols,
+        "agg_rules": agg_rules,
+        "indicator_metadata_df": indicator_metadata_df,
     }
 
 
@@ -257,15 +291,19 @@ default_path = find_excel_file()
 database_backend_ready = is_configured_database_backend_ready()
 if xlsx_file is None and not database_backend_ready and (default_path is None or not default_path.exists()):
     st.error(
-        f"Ne najdem privzetega Excela: {DATA_XLSX_FILENAME}. "
+        f"Ne najdem privzetega Excela: {YEARLY_INDICATOR_XLSX_FILENAME}. "
         "Naloži Excel v stranski vrstici."
     )
     st.stop()
 
-source_signature, raw_df, raw_market_growth_df = load_configured_source_dataframes(
-    xlsx_file,
-    default_path,
-)
+(
+    source_signature,
+    raw_df,
+    raw_market_growth_df,
+    raw_mapping_df,
+    source_agg_rules,
+    source_indicator_metadata_df,
+) = load_configured_source_dataframes(xlsx_file, default_path, database_backend_ready)
 
 if raw_df is None or source_signature is None:
     st.error("Podatkov ni bilo mogoče naložiti.")
@@ -280,8 +318,16 @@ if not required_columns.issubset(raw_df.columns):
 data_bundle_key = "_dashboard_data_bundle"
 cached_bundle = st.session_state.get(data_bundle_key)
 if cached_bundle is None or cached_bundle.get("signature") != source_signature:
-    cached_bundle = build_data_bundle(raw_df, raw_market_growth_df, source_signature)
+    cached_bundle = build_data_bundle(
+        raw_df,
+        raw_market_growth_df,
+        source_signature,
+        source_agg_rules,
+        source_indicator_metadata_df,
+    )
     st.session_state[data_bundle_key] = cached_bundle
+else:
+    set_indicator_format_metadata(cached_bundle.get("indicator_metadata_df"))
 
 df = cached_bundle["df"]
 numeric_df = cached_bundle["numeric_df"]
@@ -289,6 +335,7 @@ market_growth_numeric_df = cached_bundle["market_growth_numeric_df"]
 views = cached_bundle["views"]
 market_cols = cached_bundle["market_cols"]
 indicator_cols = cached_bundle["indicator_cols"]
+agg_rules = cached_bundle["agg_rules"]
 
 default_geojson_path = first_existing(
     DATA_DIR / DISPLAY_GEOJSON_FILENAME,
@@ -309,11 +356,10 @@ geojson_prepared = (
 )
 geojson_name_prop = get_geojson_name_prop(geojson_obj) if geojson_obj else None
 
-mapping_path = first_existing(
-    DATA_DIR / MAPPING_XLSX_FILENAME,
-    BASE_DIR / MAPPING_XLSX_FILENAME,
-)
-grouped_indicators = load_indicator_groups(mapping_path)
+if raw_mapping_df is not None:
+    grouped_indicators = build_indicator_groups_from_mapping_dataframe(raw_mapping_df)
+else:
+    grouped_indicators = load_indicator_groups()
 
 ctx = DashboardContext(
     data_signature=source_signature,
@@ -325,6 +371,7 @@ ctx = DashboardContext(
     geojson_prepared=geojson_prepared,
     geojson_name_prop=geojson_name_prop,
     grouped_indicators=grouped_indicators,
+    agg_rules=agg_rules,
     market_cols=market_cols,
     indicator_cols=indicator_cols,
     dashboard_mode=dashboard_mode,

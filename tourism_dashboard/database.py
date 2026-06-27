@@ -10,6 +10,8 @@ from tourism_dashboard.config import (
     DASHBOARD_DB_CONNECTION_NAME_DEFAULT,
     DASHBOARD_DB_CACHE_TTL_SECONDS,
     DASHBOARD_DB_SCHEMA_VERSION,
+    DASHBOARD_AGG_RULES_FRAME_KEY,
+    DASHBOARD_INDICATOR_METADATA_FRAME_KEY,
     DASHBOARD_MAIN_FRAME_KEY,
     DASHBOARD_MAPPING_FRAME_KEY,
     DASHBOARD_MARKET_GROWTH_FRAME_KEY,
@@ -243,13 +245,17 @@ def load_dashboard_frames(connection_name: str, frame_keys: tuple[str, ...]) -> 
     return loaded
 
 
-def load_main_dataframe_from_db() -> pd.DataFrame:
-    return load_dashboard_frame(get_dashboard_connection_name(), DASHBOARD_MAIN_FRAME_KEY)
-
-
-def load_market_growth_dataframe_from_db() -> pd.DataFrame | None:
-    df = load_dashboard_frame(get_dashboard_connection_name(), DASHBOARD_MARKET_GROWTH_FRAME_KEY)
-    return None if df.empty else df
+def load_core_dashboard_frames_from_db() -> dict[str, pd.DataFrame]:
+    return load_dashboard_frames(
+        get_dashboard_connection_name(),
+        (
+            DASHBOARD_MAIN_FRAME_KEY,
+            DASHBOARD_MARKET_GROWTH_FRAME_KEY,
+            DASHBOARD_MAPPING_FRAME_KEY,
+            DASHBOARD_AGG_RULES_FRAME_KEY,
+            DASHBOARD_INDICATOR_METADATA_FRAME_KEY,
+        ),
+    )
 
 
 def load_indicator_groups_from_db() -> dict[str, list[str]]:

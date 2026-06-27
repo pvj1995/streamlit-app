@@ -52,6 +52,80 @@ def get_default_unit_capacity_base(indicator: str) -> str:
     return "Nastanitvene kapacitete - Nedeljive enote"
 
 
+def get_indicator_year(indicator: str, default: int = 2024) -> int:
+    years = re.findall(r"\b(20\d{2})\b", str(indicator or ""))
+    if not years:
+        return default
+    return int(years[-1])
+
+
+def label_for_indicator_year(label: str, indicator: str) -> str:
+    year = get_indicator_year(indicator)
+    if str(year) in label:
+        return label
+    return f"{label} {year}"
+
+
+def is_i55_business_indicator(lower_indicator: str) -> bool:
+    return any(
+        token in lower_indicator
+        for token in (
+            "nast.gost.dej",
+            "nastanitveni dejav",
+            "nastan.dejav",
+            "nastan.gost",
+        )
+    )
+
+
+def is_hotel_business_indicator(lower_indicator: str) -> bool:
+    return any(
+        token in lower_indicator
+        for token in (
+            "hotelih ipd. obratih",
+            "hotelih ipd",
+            "i 55.1",
+        )
+    )
+
+
+def is_i56_business_indicator(lower_indicator: str) -> bool:
+    return any(
+        token in lower_indicator
+        for token in (
+            "dej. strežbe hrane in pijač",
+            "dej. strezbe hrane in pijac",
+            "hrane in pijač",
+            "hrane in pijac",
+            "i 56",
+        )
+    )
+
+
+def get_business_sector_employee_base(indicator: str, lower_indicator: str) -> tuple[str, str] | None:
+    if "gostinstvu" in lower_indicator:
+        return (
+            label_for_indicator_year("Zaposleni v reg.podjetjih v Gostinstvu (I)", indicator),
+            "delež zaposlenih v gostinstvu",
+        )
+    if is_i55_business_indicator(lower_indicator):
+        return (
+            label_for_indicator_year("Zaposleni v reg.podjetjih v Nast.gost.dej. (I 55)", indicator),
+            "delež zaposlenih v nastanitvi",
+        )
+    if is_hotel_business_indicator(lower_indicator):
+        return (
+            label_for_indicator_year("Zaposleni v reg.podjetjih v Hotelih ipd. obratih (I 55.1)", indicator),
+            "delež zaposlenih v hotelih ipd. obratih",
+        )
+    if is_i56_business_indicator(lower_indicator):
+        return (
+            label_for_indicator_year("Zaposleni v reg.podjetjih v Dej. strežbe hrane in pijač (I 56)", indicator),
+            "delež zaposlenih v strežbi hrane in pijač",
+        )
+    return None
+
+
 def get_total_accommodation_establishment_base(indicator: str) -> str | None:
     if "2025" in indicator:
         return "Število vseh nastanitvenih obratov 2025"
@@ -76,28 +150,53 @@ def get_sum_comparison_base(indicator: str) -> tuple[str, str]:
         return "Število prebivalcev starih 15 let ali več na območju", "delež prebivalcev 15+"
     if "starih 15 let ali več na območju" in lower_indicator:
         return population_base, "delež prebivalstva"
+    is_i55 = is_i55_business_indicator(lower_indicator)
+    is_hotel = is_hotel_business_indicator(lower_indicator)
+    is_i56 = is_i56_business_indicator(lower_indicator)
+    is_business_sector = "gostinstvu" in lower_indicator or is_i55 or is_hotel or is_i56
     if "delovno aktivno prebivalstvo v turizmu" in lower_indicator:
         if "2025" in indicator:
             return "Vsi delovno aktivni na območju 2025", "delež vseh delovno aktivnih"
         return "Vsi delovni aktivni na območju", "delež vseh delovno aktivnih"
     if "zaposl" in lower_indicator and "gostinstvu" in lower_indicator:
+        if "reg.podj" in lower_indicator or "reg.podjet" in lower_indicator:
+            return (
+                label_for_indicator_year("Zaposleni v vseh vrstah podjetij na območju (AJPES)", indicator),
+                "delež zaposlenih v vseh podjetjih",
+            )
         return "Vsi delovni aktivni na območju", "delež vseh delovno aktivnih"
-    if "zaposleni v nastan.dejav" in lower_indicator:
-        return "Vsi delovni aktivni na območju", "delež vseh delovno aktivnih"
-    if "število reg. podjetij" in lower_indicator and (
-        "gostinstvu" in lower_indicator or "nastanitveni dejav" in lower_indicator
-    ):
-        return "Število vseh vrst podjetij na območju", "delež vseh podjetij"
+    if "zaposl" in lower_indicator and (is_i55 or is_hotel or is_i56):
+        return (
+            label_for_indicator_year("Zaposleni v vseh vrstah podjetij na območju (AJPES)", indicator),
+            "delež zaposlenih v vseh podjetjih",
+        )
+    if "število reg. podjetij" in lower_indicator and is_business_sector:
+        return (
+            label_for_indicator_year("Število vseh vrst podjetij na območju (AJPES)", indicator),
+            "delež vseh podjetij",
+        )
     if any(
         token in lower_indicator
         for token in ["prihodki", "dodana vrednost", "stroški dela", "ebitda", "dobiček", "izguba", "sredstva", "kapital"]
     ):
         if "gostinstvu" in lower_indicator:
-            return "Zaposleni v Gostinstvu (I) v registr.podjetjih in s.p.", "delež zaposlenih v gostinstvu"
-        if "nastanitveni dejav" in lower_indicator:
-            return "Zaposleni v nastan.dejav. (I55) v registr.podjetjih in s.p.", "delež zaposlenih v nastanitvi"
+            return (
+                label_for_indicator_year("Zaposleni v reg.podjetjih v Gostinstvu (I)", indicator),
+                "delež zaposlenih v gostinstvu",
+            )
+        if is_i55:
+            return (
+                label_for_indicator_year("Zaposleni v reg.podjetjih v Nast.gost.dej. (I 55)", indicator),
+                "delež zaposlenih v nastanitvi",
+            )
+        sector_base = get_business_sector_employee_base(indicator, lower_indicator)
+        if sector_base:
+            return sector_base
     if "poraba el.energije" in lower_indicator and "gostinstvo" in lower_indicator:
-        return "Prihodki reg.podjetij in s.p. v Gostinstvu (I)", "delež prihodkov v gostinstvu"
+        return (
+            label_for_indicator_year("Prihodki reg.podjetij in s.p. v Gostinstvu (I)", indicator),
+            "delež prihodkov v gostinstvu",
+        )
     # Tourism-flow and accommodation-supply totals are more meaningful against sector capacity
     # than against resident population; subtype totals are benchmarked to the matching total stock.
     if any(token in lower_indicator for token in ["prenočitve", "prihodi turistov"]):
@@ -149,6 +248,29 @@ def get_sum_comparison_base(indicator: str) -> tuple[str, str]:
     return population_base, "delež prebivalstva"
 
 
+def get_numeric_column(df: pd.DataFrame, *candidates: str) -> pd.Series | None:
+    for column in candidates:
+        if column in df.columns:
+            return pd.to_numeric(df[column], errors="coerce")
+    return None
+
+
+def sum_numeric_column(df: pd.DataFrame, *candidates: str) -> float:
+    series = get_numeric_column(df, *candidates)
+    if series is None:
+        return np.nan
+    return float(series.sum(skipna=True))
+
+
+def get_i55_revenue_series(indicator: str, df: pd.DataFrame) -> pd.Series | None:
+    return get_numeric_column(
+        df,
+        label_for_indicator_year("Prihodki reg.podjetij in s.p. v Nast.gost.dej. (I 55)", indicator),
+        "Prihodki reg.podjetij in s.p. v Nast.gost.dej. (I 55) 2024",
+        "Prihodki reg.podjetij in s.p. v nastanitveni dejav. (I 55)",
+    )
+
+
 def get_precomputed_indicator_value(
     indicator: str,
     region_name: str | None,
@@ -167,36 +289,49 @@ def get_precomputed_indicator_value(
         return GINI_CHANGE_2025_2024.get(region_name)
 
     if "Celotni prihodki v nastan. dejav. na prenočitev" in indicator:
-        numerator = df["Prihodki reg.podjetij in s.p. v nastanitveni dejav. (I 55)"].astype(float).sum()
-        denominator = df["Prenočitve turistov SKUPAJ - 2024"].sum()
+        revenue = get_i55_revenue_series(indicator, df)
+        if revenue is None:
+            return np.nan
+        numerator = revenue.sum(skipna=True)
+        denominator = sum_numeric_column(df, "Prenočitve turistov SKUPAJ - 2024")
         return numerator / denominator if denominator else np.nan
 
     if "Ocenjeni prihodki iz nast. dejav. na prenočitev" in indicator:
-        numerator = df["Prihodki reg.podjetij in s.p. v nastanitveni dejav. (I 55)"].astype(float).sum() * 0.8
-        denominator = df["Prenočitve turistov SKUPAJ - 2024"].sum()
+        revenue = get_i55_revenue_series(indicator, df)
+        if revenue is None:
+            return np.nan
+        numerator = revenue.sum(skipna=True) * 0.8
+        denominator = sum_numeric_column(df, "Prenočitve turistov SKUPAJ - 2024")
         return numerator / denominator if denominator else np.nan
 
     if "Ocenjeni prihodki iz nast.dej. na prodano sobo (ned.enoto)" in indicator:
-        numerator = (df["Prihodki reg.podjetij in s.p. v nastanitveni dejav. (I 55)"] * 0.8).sum()
-        hoteli = df["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati"].sum()
-        druge_enote = df["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet"].sum()
-        kampi = df["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi"].sum()
+        revenue = get_i55_revenue_series(indicator, df)
+        if revenue is None:
+            return np.nan
+        numerator = (revenue * 0.8).sum(skipna=True)
+        hoteli = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati")
+        druge_enote = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet")
+        kampi = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi")
         vse_enote = hoteli + druge_enote + kampi
-        if not vse_enote:
+        if pd.isna(vse_enote) or not vse_enote:
             return np.nan
         hoteli_zasedenost = 1.6 * (hoteli / vse_enote)
         kampi_zasedenost = 2.5 * (kampi / vse_enote)
         druge_zasedenost = 2 * (druge_enote / vse_enote)
-        denominator = df["Prenočitve turistov SKUPAJ - 2024"].sum() / (
+        prenocitve = sum_numeric_column(df, "Prenočitve turistov SKUPAJ - 2024")
+        denominator = prenocitve / (
             hoteli_zasedenost + kampi_zasedenost + druge_zasedenost
         )
         return numerator / denominator if denominator else np.nan
 
     if "Ocenjeni prihodki iz nastan. dej. na razpoložljivo sobo (enoto)" in indicator:
-        numerator = (df["Prihodki reg.podjetij in s.p. v nastanitveni dejav. (I 55)"] * 0.8).sum()
-        hoteli = df["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati"].sum()
-        druge_enote = df["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet"].sum()
-        kampi = df["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi"].sum()
+        revenue = get_i55_revenue_series(indicator, df)
+        if revenue is None:
+            return np.nan
+        numerator = (revenue * 0.8).sum(skipna=True)
+        hoteli = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati")
+        druge_enote = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet")
+        kampi = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi")
         denominator = (hoteli + druge_enote) * 365 + kampi * 153
         return numerator / denominator if denominator else np.nan
 
@@ -363,13 +498,19 @@ def get_top_bottom_reference_indicators(
     agg_rules: dict[str, tuple[str, str | None]],
 ) -> list[str]:
     reference_indicators: set[str] = set()
+    available_indicators = {
+        indicator
+        for indicators in grouped_filtered.values()
+        for indicator in indicators
+    }
     for indicators in grouped_filtered.values():
         for indicator in indicators:
             reference_indicators.add(indicator)
             rule, _ = get_agg_rule(indicator, agg_rules)
             if rule == "sum":
                 base_indicator, _ = get_sum_comparison_base(indicator)
-                reference_indicators.add(base_indicator)
+                if base_indicator in available_indicators:
+                    reference_indicators.add(base_indicator)
     return sorted(reference_indicators)
 
 

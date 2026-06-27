@@ -158,6 +158,12 @@ Uvoz podatkov:
 python scripts/import_excel_to_db.py
 ```
 
+Preverjanje brez uvoza v bazo:
+
+```bash
+python scripts/import_excel_to_db.py --dry-run
+```
+
 Ta ukaz prebere Excel datoteke iz mape `data/`, jih uvozi v PostgreSQL/Supabase in
 preveri, ali se vsebina v bazi ujema s prebranimi Excel podatki.
 
@@ -167,16 +173,23 @@ spremembe vidne takoj.
 
 ### Dodajanje Ali Odstranjevanje Kazalnika
 
-1. Uredite `data/Skupna tabela občine.xlsx`, list `Skupna Tabela`.
-2. Enak naziv kazalnika dodajte ali odstranite v `data/mapping.xlsx`.
-3. Če kazalnik potrebuje posebno agregacijo, uredite `AGG_RULES` v kodi.
-4. Zaženite uvoz v bazo.
-5. Odprite aplikacijo in preverite prikaz.
+1. Uredite `data/yearly_indicator_input_draft.xlsx`.
+2. Kazalnik dodajte ali posodobite v listu `metrics`. `metric_id` naj ostane stabilen.
+3. Vrednosti dodajte v ustrezen list `Y####` kot stolpec z enakim `metric_id`.
+4. V listu `metric_year_rules` dodajte vrstico za leto.
+5. `source_column` pustite prazen za običajen prikaz `display_name + leto`; izpolnite ga samo, ko mora biti prikazno ime povsem ročno določeno ali brez letnice.
+6. Skupino nastavite v `metrics.group` ali `metric_year_rules.group`; `legacy_mapping` se ne uporablja več.
+7. Nastavite `aggregation_method`: `sum` za seštevne kazalnike, `wmean` ali `mean` za deleže, stopnje, povprečja, indekse in razmerja.
+8. Pri `wmean` nastavite še `weight_metric_id` in po potrebi `weight_year`.
+9. Nastavite `unit`, `format_type`, `decimal_places`, `selectable` in `lower_is_better`.
+10. Če gre za primerjalni kazalnik, dodajte pravilo v `derived_metrics`.
+11. Zaženite uvoz v bazo.
+12. Odprite aplikacijo in preverite prikaz.
 
 ### Posodobitev Vrednosti
 
-1. Uredite vrednosti v Excelu.
-2. Ne spreminjajte osnovnih stolpcev `Občine` in `Turistična regija`.
+1. Uredite vrednosti v ustreznem listu `Y####`.
+2. Ne spreminjajte `area_id` in ne preimenujte stolpcev `metric_id`, razen če posodobite tudi metapodatke.
 3. Zaženite uvoz v bazo.
 4. Preverite vsaj en zemljevid, eno tabelo in en izbran kazalnik.
 
@@ -220,8 +233,12 @@ Možni razlogi:
 
 Preverite:
 
-- ali je stolpec v Excelu
-- ali je enak naziv v `mapping.xlsx`
+- ali je kazalnik v listu `metrics`
+- ali obstaja vrstica za leto v `metric_year_rules`
+- ali je `source_column` prazen za privzeto ime ali nastavljen na pričakovani ročni prikazni naziv
+- ali ustrezen list `Y####` vsebuje stolpec `metric_id`
+- ali je skupina nastavljena v `metrics.group` ali `metric_year_rules.group`
+- ali je `selectable` nastavljen pravilno
 - ali je kazalnik v izbrani skupini
 - ali je kazalnik namenoma izločen iz top/bottom analize
 

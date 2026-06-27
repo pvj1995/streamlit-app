@@ -25,28 +25,32 @@ if str(PROJECT_ROOT) not in sys.path:
 from tourism_dashboard.config import (  # noqa: E402
     DASHBOARD_DB_CONNECTION_NAME_DEFAULT,
     DASHBOARD_DB_SCHEMA_VERSION,
+    DASHBOARD_AGG_RULES_FRAME_KEY,
     DASHBOARD_COMPASS_FRAME_PREFIX,
+    DASHBOARD_INDICATOR_METADATA_FRAME_KEY,
     DASHBOARD_MAIN_FRAME_KEY,
     DASHBOARD_MAPPING_FRAME_KEY,
     DASHBOARD_MARKET_GROWTH_FRAME_KEY,
     DASHBOARD_NATIONAL_KPI_FRAME_KEY,
     COMPASS_INDEX_SHEETS,
     COMPASS_INDEX_XLSX_FILENAME,
-    DATA_XLSX_FILENAME,
-    MAPPING_XLSX_FILENAME,
     NATIONAL_KPI_SHEET_NAME,
     NATIONAL_KPI_XLSX_FILENAME,
+    YEARLY_INDICATOR_XLSX_FILENAME,
 )
 from tourism_dashboard.helpers import (  # noqa: E402
     find_market_arrivals_seasonality_files,
     find_market_overnight_seasonality_files,
     find_market_pdb_files,
-    load_excel,
     load_market_arrivals_seasonality_workbook,
     load_market_overnight_seasonality_workbook,
     load_market_pdb_workbook,
 )
 from tourism_dashboard.paths import BASE_DIR, DATA_DIR, first_existing  # noqa: E402
+from tourism_dashboard.yearly_workbook import (  # noqa: E402
+    aggregation_rules_to_dataframe,
+    load_yearly_dashboard_frames,
+)
 
 
 @dataclass(frozen=True)
@@ -154,12 +158,14 @@ def market_frame_key(metric: str, year: int, area_level: str, frame_kind: str) -
 
 
 def build_frames() -> list[FrameSpec]:
-    main_path = first_existing(DATA_DIR / DATA_XLSX_FILENAME, BASE_DIR / DATA_XLSX_FILENAME)
-    mapping_path = first_existing(DATA_DIR / MAPPING_XLSX_FILENAME, BASE_DIR / MAPPING_XLSX_FILENAME)
-    if not main_path.exists():
-        raise FileNotFoundError(f"Missing main workbook: {main_path}")
-    if not mapping_path.exists():
-        raise FileNotFoundError(f"Missing mapping workbook: {mapping_path}")
+    yearly_path = first_existing(
+        DATA_DIR / YEARLY_INDICATOR_XLSX_FILENAME,
+        BASE_DIR / YEARLY_INDICATOR_XLSX_FILENAME,
+    )
+    if not yearly_path.exists():
+        raise FileNotFoundError(
+            f"Missing yearly indicator workbook: {DATA_DIR / YEARLY_INDICATOR_XLSX_FILENAME}"
+        )
     national_kpi_path = first_existing(
         DATA_DIR / NATIONAL_KPI_XLSX_FILENAME,
         BASE_DIR / NATIONAL_KPI_XLSX_FILENAME,
@@ -169,27 +175,44 @@ def build_frames() -> list[FrameSpec]:
         BASE_DIR / COMPASS_INDEX_XLSX_FILENAME,
     )
 
+    yearly_frames = load_yearly_dashboard_frames(yearly_path)
     frames = [
         FrameSpec(
             frame_key=DASHBOARD_MAIN_FRAME_KEY,
-            df=load_excel(main_path, sheet_name="Skupna Tabela"),
-            source_filename=main_path.name,
-            sheet_name="Skupna Tabela",
+            df=yearly_frames.main_df,
+            source_filename=yearly_path.name,
+            sheet_name="generated:Skupna Tabela",
             frame_type="main",
         ),
         FrameSpec(
             frame_key=DASHBOARD_MARKET_GROWTH_FRAME_KEY,
-            df=load_excel(main_path, sheet_name="Rast prenočitev po trgih"),
-            source_filename=main_path.name,
-            sheet_name="Rast prenočitev po trgih",
+            df=yearly_frames.market_growth_df if yearly_frames.market_growth_df is not None else pd.DataFrame(),
+            source_filename=yearly_path.name,
+            sheet_name="generated:Rast prenočitev po trgih",
             frame_type="market_growth",
         ),
         FrameSpec(
             frame_key=DASHBOARD_MAPPING_FRAME_KEY,
-            df=pd.read_excel(mapping_path),
-            source_filename=mapping_path.name,
-            sheet_name="Sheet1",
+            df=yearly_frames.mapping_df,
+            source_filename=yearly_path.name,
+            sheet_name="generated:mapping",
             frame_type="mapping",
+        ),
+        FrameSpec(
+            frame_key=DASHBOARD_AGG_RULES_FRAME_KEY,
+            df=aggregation_rules_to_dataframe(yearly_frames.agg_rules),
+            source_filename=yearly_path.name,
+            sheet_name="generated:aggregation_rules",
+            frame_type="metadata",
+            frame_kind="aggregation_rules",
+        ),
+        FrameSpec(
+            frame_key=DASHBOARD_INDICATOR_METADATA_FRAME_KEY,
+            df=yearly_frames.indicator_metadata_df,
+            source_filename=yearly_path.name,
+            sheet_name="generated:indicator_formatting",
+            frame_type="metadata",
+            frame_kind="indicator_formatting",
         ),
     ]
 
@@ -470,6 +493,11 @@ def import_frames(engine: Engine, frames: list[FrameSpec]) -> tuple[int, int]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Import dashboard Excel data into PostgreSQL/Supabase.")
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse all frames and print a summary without connecting to the database.",
+    )
+    parser.add_argument(
         "--no-verify",
         action="store_true",
         help="Skip the post-import database parity check.",
@@ -480,6 +508,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     frames = build_frames()
+    if args.dry_run:
+        print(f"Prepared {len(frames)} frames from Excel files.")
+        for spec in frames:
+            print(f"- {spec.frame_key}: {spec.df.shape[0]} rows x {spec.df.shape[1]} columns ({spec.source_filename})")
+        return
+
     database_url = get_database_url()
     engine = create_engine(database_url, pool_pre_ping=True, connect_args={"connect_timeout": 15})
 

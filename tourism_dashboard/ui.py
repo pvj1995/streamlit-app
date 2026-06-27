@@ -40,10 +40,8 @@ from tourism_dashboard.assets import (
     render_ai_section_header,
 )
 from tourism_dashboard.config import (
-    AGG_RULES,
     GROUP_CHART_COLOR_SCALES,
     GROUP_COLOR_EMOJI,
-    INDIKATORJI_Z_INDEKSI,
     INDIKATORJI_Z_OPOMBO,
     MARKET_COLOR_MAP,
     MARKET_PREFIX,
@@ -196,18 +194,34 @@ def national_kpi_change(
     return change, f"{'+' if change >= 0 else ''}{format_si_number(change, 1)} %"
 
 
-def build_slovenia_metric_delta(indicator: str, region_value: float, slovenia_value) -> str:
+def get_indicator_aggregation_method(
+    indicator: str,
+    agg_rules: dict[str, tuple[str, str | None]] | None,
+) -> str:
+    if not agg_rules:
+        return "sum"
+    method, _ = agg_rules.get(indicator, ("sum", None))
+    return str(method or "sum").strip().lower()
+
+
+def build_slovenia_metric_delta(
+    indicator: str,
+    region_value: float,
+    slovenia_value,
+    agg_rules: dict[str, tuple[str, str | None]] | None = None,
+) -> str:
     if slovenia_value is None or pd.isna(slovenia_value):
         return "V primerjavi s Slovenijo: —"
 
     lower_is_better = is_lower_better(indicator)
+    agg_method = get_indicator_aggregation_method(indicator, agg_rules)
 
-    if (not is_rate_like(indicator)) and float(slovenia_value) != 0:
+    if float(slovenia_value) != 0:
         share = (float(region_value) / float(slovenia_value)) * 100.0
         favorable = share < 100 if lower_is_better else share > 100
         unfavorable = share > 100 if lower_is_better else share < 100
         prefix = "+ " if favorable else ("- " if unfavorable else "")
-        if indicator in INDIKATORJI_Z_INDEKSI:
+        if agg_method != "sum":
             return f"{prefix}Primerjalni indeks s Slovenijo: {format_si_number(share, 1)}"
         return f"Delež v Sloveniji: {format_pct(share, 1)}"
 
@@ -241,6 +255,29 @@ def build_filtered_indicator_groups(
             indicator_to_group.setdefault(indicator, group_name)
 
     return grouped_filtered, indicator_to_group
+
+
+def build_all_indicator_options(
+    indicator_cols: list[str],
+    grouped_filtered: dict[str, list[str]],
+) -> list[str]:
+    ordered_indicators: list[str] = []
+    seen: set[str] = set()
+
+    for group_indicators in grouped_filtered.values():
+        for indicator in group_indicators:
+            if indicator in seen:
+                continue
+            ordered_indicators.append(indicator)
+            seen.add(indicator)
+
+    for indicator in indicator_cols:
+        if indicator in seen:
+            continue
+        ordered_indicators.append(indicator)
+        seen.add(indicator)
+
+    return ordered_indicators
 
 
 def build_group_selector_specs(
@@ -362,6 +399,7 @@ def build_region_indicator_table(
     indicator: str,
     region_total,
     view_title: str,
+    agg_rules: dict[str, tuple[str, str | None]] | None = None,
 ) -> pd.DataFrame:
     numeric_values = pd.to_numeric(region_df[indicator], errors="coerce")
     table = pd.DataFrame(
@@ -372,11 +410,12 @@ def build_region_indicator_table(
         }
     )
 
-    if region_total and not np.isnan(region_total) and region_total != 0 and not is_rate_like(indicator):
-        if indicator in INDIKATORJI_Z_INDEKSI:
-            table[f"Indeks {view_title}"] = round((table["_sort_value"] / region_total) * 100, 1)
-        else:
+    if region_total and not np.isnan(region_total) and region_total != 0:
+        agg_method = get_indicator_aggregation_method(indicator, agg_rules)
+        if agg_method == "sum":
             table[f"Delež {view_title} (%)"] = round(table["_sort_value"] / region_total, 3)
+        else:
+            table[f"Indeks {view_title}"] = round((table["_sort_value"] / region_total) * 100, 1)
 
     return (
         table.sort_values("_sort_value", ascending=is_lower_better(indicator), na_position="last")
@@ -2115,8 +2154,15 @@ def _add_reference_legend_entry(
     )
 
 
-def should_use_share_pie_chart(indicator: str, values: pd.Series) -> bool:
-    if is_rate_like(indicator) or indicator in INDIKATORJI_Z_INDEKSI:
+def should_use_share_pie_chart(
+    indicator: str,
+    values: pd.Series,
+    agg_rules: dict[str, tuple[str, str | None]],
+) -> bool:
+    agg_method, _ = agg_rules.get(indicator, ("sum", None))
+    if agg_method != "sum":
+        return False
+    if is_percent_like(indicator) or is_rate_like(indicator):
         return False
     numeric_values = pd.to_numeric(values, errors="coerce").dropna()
     if numeric_values.empty:
@@ -2141,6 +2187,7 @@ def render_comparison_indicator_chart(
     slovenia_value: float | None = None,
     area_reference_value: float | None = None,
     area_reference_label: str = "Območje",
+    agg_rules: dict[str, tuple[str, str | None]] | None = None,
 ) -> None:
     display_indicator = get_indicator_display_name(indicator)
     plot_df = chart_df[[label_col, value_col]].copy()
@@ -2150,9 +2197,7 @@ def render_comparison_indicator_chart(
         st.info("Za izbrani kazalnik ni dovolj podatkov za grafični prikaz.")
         return
 
-    
-
-    if should_use_share_pie_chart(indicator, plot_df[value_col]):
+    if should_use_share_pie_chart(indicator, plot_df[value_col], agg_rules or {}):
         st.markdown(f"**{title}** ***(delež)***")
         plot_df = plot_df.sort_values(value_col, ascending=False).reset_index(drop=True)
         total_value = float(plot_df[value_col].sum())
@@ -2636,6 +2681,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
 
     indicator_cols = ctx.indicator_cols
     grouped_filtered, indicator_to_group = build_filtered_indicator_groups(indicator_cols, ctx.grouped_indicators)
+    all_indicator_options = build_all_indicator_options(indicator_cols, grouped_filtered)
 
     df_regions = ctx.numeric_df[ctx.numeric_df[group_col].notna()].copy()
     regions = sorted(df_regions[group_col].dropna().unique().tolist())
@@ -2655,9 +2701,11 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
     with selector_col:
         selected_group_key = render_group_selector(group_col, indicator_cols, grouped_filtered)
 
-    group_indicator_cols = indicator_cols if selected_group_key == "__all__" else grouped_filtered.get(selected_group_key, [])
+    group_indicator_cols = (
+        all_indicator_options if selected_group_key == "__all__" else grouped_filtered.get(selected_group_key, [])
+    )
     if not group_indicator_cols:
-        group_indicator_cols = indicator_cols
+        group_indicator_cols = all_indicator_options
 
     with map_indicator_col:
         st.markdown("<div style='min-height: 10rem;'></div>", unsafe_allow_html=True)
@@ -2670,8 +2718,8 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         )
         show_shared_warning_if_needed_indicator(map_indicator)
 
-    map_reverse_color_scale = is_lower_better(map_indicator)
-    map_color_direction = "lower_better" if map_reverse_color_scale else "higher_better"
+    map_reverse_color_scale = False
+    map_color_direction = "higher_value"
 
     dash_inds = []
     if ctx.dashboard_mode:
@@ -2686,7 +2734,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         )
 
     agg_needed = [map_indicator] + [indicator for indicator in dash_inds if indicator != map_indicator]
-    region_agg = compute_region_aggregates(numeric_df, regions, agg_needed, AGG_RULES, group_col=group_col)
+    region_agg = compute_region_aggregates(numeric_df, regions, agg_needed, ctx.agg_rules, group_col=group_col)
     region_agg_by_group = region_agg.set_index(group_col)
     region_to_value_map = dict(zip(region_agg[group_col], region_agg[map_indicator]))
     display_geojson_obj = _get_display_geojson(ctx)
@@ -2768,6 +2816,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             indicator=chart_indicator,
             title=f"Grafična primerjava območij - {chart_indicator}",
             slovenia_value=df_slo_total_num.get(chart_indicator, np.nan),
+            agg_rules=ctx.agg_rules,
         )
 
         _, _, kpi_col = st.columns([1, 2, 1])
@@ -2782,7 +2831,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         region_total = region_agg_by_group.at[selected_region, map_indicator]
         sl_total = df_slo_total_num.get(map_indicator, np.nan)
 
-        main_delta_text = build_slovenia_metric_delta(map_indicator, float(region_total), sl_total)
+        main_delta_text = build_slovenia_metric_delta(map_indicator, float(region_total), sl_total, ctx.agg_rules)
 
         left_kpi, right_kpi = st.columns([1.2, 1])
         with left_kpi:
@@ -2791,7 +2840,15 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                 f"{format_indicator_value_map(map_indicator, region_total)}",
                 main_delta_text,
             )
-            st.caption("Opomba: »Delež v Sloveniji« je prikazan za kazalnike, kjer se vrednosti seštevajo (ne za stopnje/indekse).")
+            if get_indicator_aggregation_method(map_indicator, ctx.agg_rules) == "sum":
+                st.caption(
+                    "Opomba: »Delež v Sloveniji« je prikazan za kazalnike, kjer se vrednosti seštevajo."
+                )
+            else:
+                st.caption(
+                    "Opomba: »Primerjalni indeks s Slovenijo« primerja vrednost območja z vrednostjo Slovenije "
+                    "(Slovenija = 100)."
+                )
         with right_kpi:
             green_metric(
                 f" Celotna Slovenija - {get_indicator_display_name(map_indicator)}",
@@ -2811,20 +2868,20 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                     st.metric(
                         get_indicator_display_name(indicator),
                         format_indicator_value_map(indicator, region_value),
-                        build_slovenia_metric_delta(indicator, region_value, slovenia_value),
+                        build_slovenia_metric_delta(indicator, region_value, slovenia_value, ctx.agg_rules),
                     )
 
         group_sections = build_top_bottom_group_sections(
             reg_df=region_df,
             df_slo_total_num=df_slo_total_num,
             grouped_filtered=grouped_filtered,
-            agg_rules=AGG_RULES,
+            agg_rules=ctx.agg_rules,
             region_name=selected_region,
             reference_agg_df=compute_region_aggregates(
                 numeric_df=numeric_df,
                 regions=regions,
-                indicator_cols=get_top_bottom_reference_indicators(grouped_filtered, AGG_RULES),
-                agg_rules=AGG_RULES,
+                indicator_cols=get_top_bottom_reference_indicators(grouped_filtered, ctx.agg_rules),
+                agg_rules=ctx.agg_rules,
                 group_col=group_col,
             ),
         )
@@ -2915,7 +2972,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
         if selected_region == "Vsa območja":
             st.subheader(f"Tabela območij \n \n **:blue[{get_indicator_display_name(map_indicator)}]**")
             table = region_agg[[group_col, map_indicator]].copy()
-            agg_rule, _ = AGG_RULES.get(map_indicator, ("sum", None))
+            agg_rule, _ = ctx.agg_rules.get(map_indicator, ("sum", None))
             slovenia_total = df_slo_total_num.get(map_indicator, np.nan)
             show_share_column = (
                 agg_rule == "sum"
@@ -2938,14 +2995,14 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             )
         else:
             st.subheader(f"Tabela občin znotraj območja \n \n **:blue[{get_indicator_display_name(map_indicator)}]**")
-            region_total = aggregate_indicator_with_rules(region_df, map_indicator, AGG_RULES, None)
-            table = build_region_indicator_table(region_df, map_indicator, region_total, view_title)
+            region_total = aggregate_indicator_with_rules(region_df, map_indicator, ctx.agg_rules, None)
+            table = build_region_indicator_table(region_df, map_indicator, region_total, view_title, ctx.agg_rules)
             render_ranked_dataframe(
                 table,
                 source_columns={"Vrednost": map_indicator},
                 height=680,
             )
-            if region_total and not np.isnan(region_total) and region_total != 0 and not is_rate_like(map_indicator):
+            if region_total and not np.isnan(region_total) and region_total != 0:
                 if view_title == "Turistične regije":
                     st.caption(
                         "**Opomba:** Delež posamezne občine znotraj opazovane turistične regije (%) je prikazan "
@@ -2993,7 +3050,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
                 format_func=lambda indicator: format_indicator_option_label(indicator, indicator_to_group),
             )
         st.subheader(f":blue[{get_indicator_display_name(chart_indicator)}]")
-        region_chart_total = aggregate_indicator_with_rules(region_df, chart_indicator, AGG_RULES, selected_region)
+        region_chart_total = aggregate_indicator_with_rules(region_df, chart_indicator, ctx.agg_rules, selected_region)
         municipality_chart_df = region_df[[ "Občine", chart_indicator]].copy()
         render_comparison_indicator_chart(
             chart_df=municipality_chart_df,
@@ -3004,6 +3061,7 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             slovenia_value=df_slo_total_num.get(chart_indicator, np.nan),
             area_reference_value=region_chart_total,
             area_reference_label="Območje",
+            agg_rules=ctx.agg_rules,
         )
 
         market_ai_context = build_market_ai_context(

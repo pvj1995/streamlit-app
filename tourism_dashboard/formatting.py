@@ -10,6 +10,7 @@ from tourism_dashboard.config import (
 )
 
 ColumnWidth: TypeAlias = Literal["small", "medium", "large"]
+INDICATOR_FORMAT_METADATA: dict[str, dict[str, Any]] = {}
 
 
 def _number_column(
@@ -26,6 +27,81 @@ def _text_column(width: ColumnWidth | None = None) -> Any:
     if width is None:
         return st.column_config.TextColumn()
     return st.column_config.TextColumn(width=width)
+
+
+def set_indicator_format_metadata(metadata_df: pd.DataFrame | None) -> None:
+    global INDICATOR_FORMAT_METADATA
+
+    if metadata_df is None or metadata_df.empty or "indicator" not in metadata_df.columns:
+        INDICATOR_FORMAT_METADATA = {}
+        return
+
+    metadata: dict[str, dict[str, Any]] = {}
+    for _, row in metadata_df.iterrows():
+        indicator = str(row.get("indicator") or "").strip()
+        if not indicator:
+            continue
+        metadata[indicator] = {
+            "unit": str(row.get("unit") or "").strip(),
+            "format_type": str(row.get("format_type") or "").strip(),
+            "decimal_places": row.get("decimal_places", ""),
+            "lower_is_better": row.get("lower_is_better", ""),
+        }
+    INDICATOR_FORMAT_METADATA = metadata
+
+
+def get_indicator_format_metadata(indicator: str) -> dict[str, Any]:
+    return INDICATOR_FORMAT_METADATA.get(str(indicator or "").strip(), {})
+
+
+def _metadata_format_type(indicator: str) -> str:
+    return str(get_indicator_format_metadata(indicator).get("format_type") or "").strip().lower()
+
+
+def _metadata_unit(indicator: str) -> str:
+    return str(get_indicator_format_metadata(indicator).get("unit") or "").strip().lower()
+
+
+def get_indicator_decimal_places(indicator: str, default: int | None = None) -> int | None:
+    value = get_indicator_format_metadata(indicator).get("decimal_places", "")
+    try:
+        if pd.isna(value):
+            return default
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_indicator_lower_is_better_metadata(indicator: str) -> bool | None:
+    value = get_indicator_format_metadata(indicator).get("lower_is_better", "")
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "yes", "1", "da"}:
+        return True
+    if normalized in {"false", "no", "0", "ne"}:
+        return False
+    return None
+
+
+def is_currency_like(indicator: str) -> bool:
+    format_type = _metadata_format_type(indicator)
+    unit = _metadata_unit(indicator)
+    return (
+        indicator in INDIKATORJI_Z_VALUTO
+        or format_type in {"currency", "currency_or_amount", "eur"}
+        or unit in {"eur", "€", "euro"}
+    )
 
 
 def is_rate_like(column_name: str) -> bool:
@@ -90,6 +166,9 @@ def is_rate_like(column_name: str) -> bool:
 
 
 def is_lower_better(indicator: str) -> bool:
+    metadata_value = get_indicator_lower_is_better_metadata(indicator)
+    if metadata_value is not None:
+        return metadata_value
     if indicator in LOWER_IS_BETTER_INDICATORS:
         return True
     normalized = str(indicator or "").lower()
@@ -107,6 +186,11 @@ def is_lower_better(indicator: str) -> bool:
 
 
 def is_percent_like(column_name: str) -> bool:
+    format_type = _metadata_format_type(column_name)
+    unit = _metadata_unit(column_name)
+    if format_type in {"percent", "percentage", "percent_or_rate", "percent_decimal"} or unit == "%":
+        return True
+
     lower_name = column_name.lower()
     positive = [
         "delež",
@@ -162,7 +246,7 @@ def format_comparison_delta(value, unit: str) -> str:
 def get_indicator_gap_unit(indicator: str) -> str:
     if is_percent_like(indicator):
         return "o.t."
-    if indicator in INDIKATORJI_Z_VALUTO:
+    if is_currency_like(indicator):
         return "€"
     return ""
 
@@ -172,7 +256,8 @@ def format_indicator_value_tables(indicator: str, value):
         return round(value, 3)
     if "GINI" in indicator:
         return round(value, 2)
-    return round(value, 2)
+    decimals = get_indicator_decimal_places(indicator, 2)
+    return round(value, decimals if decimals is not None else 2)
 
 
 def format_indicator_value_map(indicator: str, value):
@@ -180,8 +265,8 @@ def format_indicator_value_map(indicator: str, value):
         return format_pct(float(value) * 100.0, 1)
     if "GINI" in indicator:
         return format(round(value, 2), ".2f")
-    if indicator in INDIKATORJI_Z_VALUTO:
-        return f"{format_si_number(value)} €"
+    if is_currency_like(indicator):
+        return f"{format_si_number(value, get_indicator_decimal_places(indicator, 0))} €"
     return format_si_number(value)
 
 
@@ -199,7 +284,7 @@ def make_localized_column_config(
             width = width_overrides.get(column)
             if is_percent_like(source_column):
                 config[column] = _number_column(format="percent", width=width)
-            elif source_column in INDIKATORJI_Z_VALUTO:
+            elif is_currency_like(source_column):
                 config[column] = _number_column(format="euro", width=width)
             else:
                 config[column] = _number_column(format="localized", width=width)

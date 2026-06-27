@@ -14,6 +14,7 @@ class DashboardContext:
     geojson_prepared: bool
     geojson_name_prop: str | None
     grouped_indicators: dict[str, list[str]]
+    agg_rules: dict[str, tuple[str, str | None]]
     market_cols: list[str]
     indicator_cols: list[str]
     dashboard_mode: bool

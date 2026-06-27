@@ -18,8 +18,25 @@ COMPASS_AREA_COLUMN_MAP = {
     "Vodilne destinacije": "leading_destination",
     "Perspektivne destinacije": "perspective_destination",
     "Turistične regije": "tourism_region",
+    "Kohezijske regije": "cohesion_region",
     "Makro destinacije": "macro_destination",
     "Slovenija": "slovenia",
+}
+COMPASS_COHESION_AREA_LEVEL = "Kohezijske regije"
+COMPASS_COHESION_COLUMN = "cohesion_region"
+COMPASS_COHESION_DISPLAY_ORDER = 5
+COMPASS_TOURISM_REGION_TO_COHESION = {
+    "Dolenjska, Bela Krajina in Kočevsko": "Vzhodna Slovenija",
+    "Goriško, Vipava, Kras": "Zahodna Slovenija",
+    "Julijske Alpe": "Zahodna Slovenija",
+    "Ljubljana in osrednja Slovenija": "Zahodna Slovenija",
+    "Pomurje": "Vzhodna Slovenija",
+    "Posavje": "Vzhodna Slovenija",
+    "Predalpska Slovenija (Vzh.Gorenjska)": "Zahodna Slovenija",
+    "Savinjsko, Celje, Obsotelje in Kozjansko": "Vzhodna Slovenija",
+    "Slovenska Istra": "Zahodna Slovenija",
+    "Zgornje Savinjska, Šaleška in Koroška": "Vzhodna Slovenija",
+    "Štajerska (Maribor, Pohorje, Ptuj)": "Vzhodna Slovenija",
 }
 
 
@@ -74,7 +91,10 @@ def normalize_compass_frames(frames: dict[str, pd.DataFrame]) -> dict[str, pd.Da
         area_mapping = normalized["compass_area_mapping"]
         area_mapping["municipality_name"] = area_mapping["municipality_name"].astype(str).map(normalize_name)
         area_mapping["municipality_norm"] = area_mapping["municipality_name"].map(normalize_name)
+        area_mapping = add_compass_cohesion_mapping(area_mapping)
         normalized["compass_area_mapping"] = area_mapping
+    if "compass_area_levels" in normalized:
+        normalized["compass_area_levels"] = add_compass_cohesion_area_level(normalized["compass_area_levels"])
     if "compass_values_long" in normalized:
         values = normalized["compass_values_long"]
         values["value"] = pd.to_numeric(values["value"], errors="coerce")
@@ -83,6 +103,49 @@ def normalize_compass_frames(frames: dict[str, pd.DataFrame]) -> dict[str, pd.Da
                 values[column] = pd.to_numeric(values[column], errors="coerce")
         normalized["compass_values_long"] = values
     return normalized
+
+
+def add_compass_cohesion_mapping(area_mapping: pd.DataFrame) -> pd.DataFrame:
+    if "tourism_region" not in area_mapping.columns:
+        return area_mapping
+
+    area_mapping = area_mapping.copy()
+    tourism_regions = area_mapping["tourism_region"].astype(str).map(normalize_name)
+    derived_cohesion = tourism_regions.map(COMPASS_TOURISM_REGION_TO_COHESION)
+
+    if COMPASS_COHESION_COLUMN not in area_mapping.columns:
+        area_mapping[COMPASS_COHESION_COLUMN] = derived_cohesion
+    else:
+        current = area_mapping[COMPASS_COHESION_COLUMN]
+        blank_mask = current.isna() | current.astype(str).str.strip().eq("")
+        area_mapping.loc[blank_mask, COMPASS_COHESION_COLUMN] = derived_cohesion.loc[blank_mask]
+        area_mapping[COMPASS_COHESION_COLUMN] = area_mapping[COMPASS_COHESION_COLUMN].astype(str).map(normalize_name)
+    return area_mapping
+
+
+def add_compass_cohesion_area_level(area_levels: pd.DataFrame) -> pd.DataFrame:
+    if area_levels.empty or "area_level" not in area_levels.columns:
+        return area_levels
+
+    area_levels = area_levels.copy()
+    if area_levels["area_level"].astype(str).eq(COMPASS_COHESION_AREA_LEVEL).any():
+        return area_levels
+
+    if "display_order" in area_levels.columns:
+        display_order = pd.to_numeric(area_levels["display_order"], errors="coerce")
+        area_levels.loc[display_order >= COMPASS_COHESION_DISPLAY_ORDER, "display_order"] = display_order + 1
+
+    new_row = {
+        "area_level_id": "cohesion_regions",
+        "area_level": COMPASS_COHESION_AREA_LEVEL,
+        "source_area_column": "Kohezijska regija",
+        "display_order": COMPASS_COHESION_DISPLAY_ORDER,
+        "include_map": True,
+        "notes": "Agregirano iz občin v kohezijski regiji.",
+    }
+    for column in area_levels.columns:
+        new_row.setdefault(column, "")
+    return pd.concat([area_levels, pd.DataFrame([new_row])], ignore_index=True)
 
 
 def format_compass_metric_label(metric: pd.Series, *, source_year: int | None, reference_year: int | None) -> str:
