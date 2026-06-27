@@ -534,6 +534,15 @@ def render_year_comparison(
                 )
 
         table = region_agg[[group_col] + indicators].copy()
+        slovenia_table_row = {group_col: "Slovenija"}
+        has_slovenia_table_value = False
+        for indicator in indicators:
+            value = df_slo_total_num.get(indicator, np.nan)
+            slovenia_table_row[indicator] = value
+            if pd.notna(value):
+                has_slovenia_table_value = True
+        if has_slovenia_table_value:
+            table = pd.concat([table, pd.DataFrame([slovenia_table_row])], ignore_index=True)
         table = table.sort_values(latest_indicator, ascending=is_lower_better(latest_indicator), na_position="last")
         rename_map = {str(entry["indicator"]): str(entry["year"]) for entry in entries}
         source_columns = {str(entry["year"]): str(entry["indicator"]) for entry in entries}

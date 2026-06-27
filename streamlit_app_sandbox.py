@@ -388,57 +388,75 @@ compass_index_logo_path = first_existing(
     BASE_DIR / COMPASS_INDEX_LOGO_FILENAME,
 )
 
-(
-    tab_kazalniki,
-    tab_trgi,
-    tab_kapacitete,
-    tab_nacionalni_kpi,
-    tab_compass_index,
-    tab_eu27_kpi,
-) = st.tabs(
-    [
-        "Kazalniki",
-        "Turistični promet in sezonskost po trgih",
-        "Nastanitvene kapacitete in struktura kapacitet",
-        "Ključni razvojni in poslovni kazalniki - nacionalna raven",
-        "Razvojni indeks turističnih destinacij – Tourism Destination COMPASS INDEX",
-        "Ključni kazalniki uspešnosti razvoja turizma na ravni EU-27",
-    ]
+MAIN_SECTIONS = [
+    ("kazalniki", "Kazalniki", 0.7),
+    ("trgi", "Turistični promet in sezonskost po trgih", 1.75),
+    ("kapacitete", "Nastanitvene kapacitete in struktura kapacitet", 1.85),
+    ("nacionalni-kpi", "Ključni razvojni in poslovni kazalniki - nacionalna raven", 2.1),
+    ("compass-index", "Razvojni indeks turističnih destinacij - COMPASS INDEX", 2.0),
+    ("eu27-kpi", "Ključni kazalniki uspešnosti razvoja turizma na ravni EU-27", 1.9),
+]
+main_section_labels = {key: label for key, label, _width in MAIN_SECTIONS}
+active_main_section = str(
+    st.query_params.get("main")
+    or st.session_state.get("active_main_section")
+    or MAIN_SECTIONS[0][0]
 )
+if active_main_section not in main_section_labels:
+    active_main_section = MAIN_SECTIONS[0][0]
+st.session_state["active_main_section"] = active_main_section
 
-with tab_kazalniki:
-    view_labels = [view[0] for view in views]
-    selected_view_label = st.selectbox("Pogled", view_labels, index=0, key="view_main")
-    view_title, group_col = next(view for view in views if view[0] == selected_view_label)
-    render_view(view_title, group_col, ctx)
+nav_columns = st.columns([width for _key, _label, width in MAIN_SECTIONS], gap="small")
+for nav_col, (section_key, section_label, _width) in zip(nav_columns, MAIN_SECTIONS):
+    with nav_col:
+        clicked = st.button(
+            section_label,
+            key=f"main_nav_{section_key}",
+            type="primary" if section_key == active_main_section else "secondary",
+            use_container_width=True,
+        )
+        if clicked and section_key != active_main_section:
+            st.session_state["active_main_section"] = section_key
+            st.query_params["main"] = section_key
+            st.rerun()
 
-with tab_trgi:
-    view_labels = [view[0] for view in views] + ["SLOVENIJA"]
-    selected_view_label = st.selectbox("Pogled", view_labels, index=0, key="view_trgi")
-    if selected_view_label == "SLOVENIJA":
-        view_title, group_col = "SLOVENIJA", "SLOVENIJA"
-    else:
+st.markdown("<hr style='margin-top:8px;margin-bottom:20px;'>", unsafe_allow_html=True)
+
+main_section_container = st.empty()
+with main_section_container.container():
+    if active_main_section == "kazalniki":
+        view_labels = [view[0] for view in views]
+        selected_view_label = st.selectbox("Pogled", view_labels, index=0, key="view_main")
         view_title, group_col = next(view for view in views if view[0] == selected_view_label)
-    render_market_structure(view_title, group_col, ctx)
+        render_view(view_title, group_col, ctx)
 
-with tab_kapacitete:
-    view_labels = [view[0] for view in views] + ["SLOVENIJA"]
-    selected_view_label = st.selectbox("Pogled", view_labels, index=0, key="view_kapacitete")
-    if selected_view_label == "SLOVENIJA":
-        view_title, group_col = "SLOVENIJA", "SLOVENIJA"
-    else:
-        view_title, group_col = next(view for view in views if view[0] == selected_view_label)
-    render_accommodation_capacity_structure(view_title, group_col, ctx)
+    elif active_main_section == "trgi":
+        view_labels = [view[0] for view in views] + ["SLOVENIJA"]
+        selected_view_label = st.selectbox("Pogled", view_labels, index=0, key="view_trgi")
+        if selected_view_label == "SLOVENIJA":
+            view_title, group_col = "SLOVENIJA", "SLOVENIJA"
+        else:
+            view_title, group_col = next(view for view in views if view[0] == selected_view_label)
+        render_market_structure(view_title, group_col, ctx)
 
-with tab_nacionalni_kpi:
-    render_national_business_indicators()
+    elif active_main_section == "kapacitete":
+        view_labels = [view[0] for view in views] + ["SLOVENIJA"]
+        selected_view_label = st.selectbox("Pogled", view_labels, index=0, key="view_kapacitete")
+        if selected_view_label == "SLOVENIJA":
+            view_title, group_col = "SLOVENIJA", "SLOVENIJA"
+        else:
+            view_title, group_col = next(view for view in views if view[0] == selected_view_label)
+        render_accommodation_capacity_structure(view_title, group_col, ctx)
 
-with tab_compass_index:
-    render_compass_destination_index(ctx, compass_index_logo_path)
+    elif active_main_section == "nacionalni-kpi":
+        render_national_business_indicators()
 
-with tab_eu27_kpi:
-    st.subheader("Ključni kazalniki uspešnosti razvoja turizma na ravni EU-27")
-    st.info("V izdelavi")
+    elif active_main_section == "compass-index":
+        render_compass_destination_index(ctx, compass_index_logo_path)
+
+    elif active_main_section == "eu27-kpi":
+        st.subheader("Ključni kazalniki uspešnosti razvoja turizma na ravni EU-27")
+        st.info("V izdelavi")
 
 st.markdown("---")
 
