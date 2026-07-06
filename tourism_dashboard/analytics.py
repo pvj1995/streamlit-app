@@ -9,6 +9,7 @@ import pandas as pd
 from tourism_dashboard.config import (
     AGG_RULES,
     GINI_2025_VALUES,
+    GINI_2019_VALUES,
     GINI_CHANGE_2024_2019,
     GINI_CHANGE_2025_2019,
     GINI_CHANGE_2025_2024,
@@ -283,6 +284,8 @@ def get_precomputed_indicator_value(
         return GINI_CHANGE_2024_2019.get(region_name)
     if "GINI Indeks - sezonskost prenočitev - 2025" in indicator:
         return GINI_2025_VALUES.get(region_name)
+    if "GINI Indeks - sezonskost prenočitev - 2019" in indicator:
+        return GINI_2019_VALUES.get(region_name)
     if "Gibanje GINI Indeksa prenoč. 2025/2019" in indicator:
         return GINI_CHANGE_2025_2019.get(region_name)
     if "Gibanje GINI Indeksa prenoč. 2025/2024" in indicator:

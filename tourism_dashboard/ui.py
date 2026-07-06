@@ -291,7 +291,7 @@ def _metadata_by_indicator(metadata_df: pd.DataFrame | None) -> dict[str, dict[s
     for _, row in metadata_df.iterrows():
         indicator = str(row.get("indicator") or "").strip()
         if indicator:
-            rows[indicator] = row.to_dict()
+            rows[indicator] = {str(key): value for key, value in row.to_dict().items()}
     return rows
 
 
