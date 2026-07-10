@@ -7,7 +7,12 @@ from typing import Any
 
 import pandas as pd
 
-from tourism_dashboard.config import AGG_RULES
+from tourism_dashboard.config import (
+    AGG_RULES,
+    ACCOMMODATION_MARKET_GROUP,
+    ECONOMIC_BUSINESS_GROUP,
+    normalize_group_name,
+)
 
 
 REQUIRED_YEARLY_SHEETS = {
@@ -27,8 +32,8 @@ AREA_OUTPUT_COLUMNS = [
 GROUP_OUTPUT_ORDER = [
     "Družbeni kazalniki",
     "Okoljski kazalniki",
-    "Ekonomski nastanitveni in tržni turistični kazalniki",
-    "Ekonomsko poslovni kazalniki turistične dejavnosti",
+    ACCOMMODATION_MARKET_GROUP,
+    ECONOMIC_BUSINESS_GROUP,
 ]
 
 
@@ -236,10 +241,14 @@ def build_indicator_groups_from_mapping_dataframe(mapping_df: pd.DataFrame) -> d
     if mapping_df.empty:
         return groups
     for column in mapping_df.columns:
+        group_name = normalize_group_name(str(column))
         series = mapping_df[column].dropna().astype(str).str.strip()
         values = [value for value in series.tolist() if value]
         if values:
-            groups[str(column)] = values
+            groups.setdefault(group_name, [])
+            for value in values:
+                if value not in groups[group_name]:
+                    groups[group_name].append(value)
     return groups
 
 
@@ -284,14 +293,14 @@ def _build_mapping_from_metadata(
                 ordered_rule_rows.append(row)
 
         for row in ordered_rule_rows:
-            group = _metric_group(row, metrics_by_metric_id)
+            group = normalize_group_name(_metric_group(row, metrics_by_metric_id))
             source_column = _metric_output_label(row, metrics_by_metric_id)
             selectable = _metric_selectable(row, metrics_by_metric_id)
             if group and source_column and selectable:
                 groups.setdefault(group, []).append(source_column)
     if not derived_metrics.empty:
         for _, row in derived_metrics.iterrows():
-            group = _clean_optional_text(row.get("group"))
+            group = normalize_group_name(_clean_optional_text(row.get("group")))
             source_column = _derived_output_label(row)
             selectable = _clean_bool(row.get("selectable"), True)
             if group and source_column and selectable:

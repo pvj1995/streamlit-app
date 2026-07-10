@@ -40,12 +40,15 @@ from tourism_dashboard.assets import (
     render_ai_section_header,
 )
 from tourism_dashboard.config import (
+    ACCOMMODATION_MARKET_GROUP,
+    ECONOMIC_BUSINESS_GROUP,
     GROUP_CHART_COLOR_SCALES,
     GROUP_COLOR_EMOJI,
     INDIKATORJI_Z_OPOMBO,
     MARKET_COLOR_MAP,
     MARKET_PREFIX,
     SKUPNO_OPOZORILO_AGREGACIJA,
+    normalize_group_name,
 )
 from tourism_dashboard.compass import (
     aggregate_compass_results,
@@ -246,11 +249,15 @@ def build_filtered_indicator_groups(
     indicator_to_group: dict[str, str] = {}
     indicator_set = set(indicator_cols)
 
-    for group_name, items in grouped_indicators.items():
+    for raw_group_name, items in grouped_indicators.items():
+        group_name = normalize_group_name(str(raw_group_name))
         filtered = [indicator for indicator in items if indicator in indicator_set]
         if not filtered:
             continue
-        grouped_filtered[group_name] = filtered
+        grouped_filtered.setdefault(group_name, [])
+        for indicator in filtered:
+            if indicator not in grouped_filtered[group_name]:
+                grouped_filtered[group_name].append(indicator)
         for indicator in filtered:
             indicator_to_group.setdefault(indicator, group_name)
 
@@ -679,14 +686,14 @@ def build_group_selector_specs(
             "count": len(grouped_filtered.get("Okoljski kazalniki", [])),
         },
         {
-            "key": "Ekonomski nastanitveni in tržni turistični kazalniki",
+            "key": ACCOMMODATION_MARKET_GROUP,
             "label": "Nastanitveni\nin tržni",
-            "count": len(grouped_filtered.get("Ekonomski nastanitveni in tržni turistični kazalniki", [])),
+            "count": len(grouped_filtered.get(ACCOMMODATION_MARKET_GROUP, [])),
         },
         {
-            "key": "Ekonomsko poslovni kazalniki turistične dejavnosti",
+            "key": ECONOMIC_BUSINESS_GROUP,
             "label": "Ekon.\nposlovni",
-            "count": len(grouped_filtered.get("Ekonomsko poslovni kazalniki turistične dejavnosti", [])),
+            "count": len(grouped_filtered.get(ECONOMIC_BUSINESS_GROUP, [])),
         },
     ]
 
@@ -751,13 +758,13 @@ def render_group_selector(
             "__all__": f"Vsi kazalniki ({len(indicator_cols)})",
             "Družbeni kazalniki": f"Družbeni kazalniki ({len(grouped_filtered.get('Družbeni kazalniki', []))})",
             "Okoljski kazalniki": f"Okoljski kazalniki ({len(grouped_filtered.get('Okoljski kazalniki', []))})",
-            "Ekonomski nastanitveni in tržni turistični kazalniki": (
-                "Ekonomski nastanitveni in tržni turistični kazalniki "
-                f"({len(grouped_filtered.get('Ekonomski nastanitveni in tržni turistični kazalniki', []))})"
+            ACCOMMODATION_MARKET_GROUP: (
+                f"{ACCOMMODATION_MARKET_GROUP} "
+                f"({len(grouped_filtered.get(ACCOMMODATION_MARKET_GROUP, []))})"
             ),
-            "Ekonomsko poslovni kazalniki turistične dejavnosti": (
-                "Ekonomsko poslovni kazalniki turistične dejavnosti "
-                f"({len(grouped_filtered.get('Ekonomsko poslovni kazalniki turistične dejavnosti', []))})"
+            ECONOMIC_BUSINESS_GROUP: (
+                f"{ECONOMIC_BUSINESS_GROUP} "
+                f"({len(grouped_filtered.get(ECONOMIC_BUSINESS_GROUP, []))})"
             ),
         }
 
@@ -3679,6 +3686,13 @@ def build_national_comparison_rows(
     return comparison.sort_values("sort_order").reset_index(drop=True), start_section, end_section
 
 
+def get_national_metric_display_name(metric: str, *, include_year: bool = False) -> str:
+    label = get_indicator_display_name(metric)
+    if include_year:
+        return label
+    return re.sub(r"\s*[-–]?\s+(?:19|20)\d{2}$", "", label).strip()
+
+
 def render_national_kpi_card(metric: str, row: pd.Series) -> None:
     if 2024 not in row.index or pd.isna(row.get(2024)):
         return
@@ -3757,7 +3771,7 @@ def render_national_trend_chart(sector_df: pd.DataFrame, sector_id: str) -> None
                 continue
             chart_rows.append(
                 {
-                    "Kazalnik": get_indicator_display_name(str(row["metric"])),
+                    "Kazalnik": get_national_metric_display_name(str(row["metric"])),
                     "Leto": int(year),
                     "Indeks 2019 = 100": (float(value) / float(base_value)) * 100.0,
                     "Vrednost": format_national_kpi_value(value, row["format_type"], row["unit"]),
@@ -3819,11 +3833,11 @@ def render_national_comparison(sector_df: pd.DataFrame, sector_id: str, *, real:
         metric_options,
         default=default_metrics or metric_options[:10],
         key=f"national_compare_metrics_{sector_id}_{'real' if real else 'nominal'}",
-        format_func=get_indicator_display_name,
+        format_func=get_national_metric_display_name,
     )
     chart_df = comparison_df[comparison_df["metric"].isin(selected_metrics)].dropna(subset=["change_value"]).copy()
     if not chart_df.empty:
-        chart_df["Kazalnik"] = chart_df["metric"].apply(get_indicator_display_name)
+        chart_df["Kazalnik"] = chart_df["metric"].apply(get_national_metric_display_name)
         chart_df["Kazalnik_chart"] = chart_df["Kazalnik"].apply(lambda value: wrap_market_chart_label(value, 26))
         fig = px.bar(
             chart_df.sort_values("change_value", ascending=True),
@@ -3866,7 +3880,7 @@ def render_national_comparison(sector_df: pd.DataFrame, sector_id: str, *, real:
             "outcome": "Interpretacija",
         }
     )
-    table["Kazalnik"] = table["Kazalnik"].apply(get_indicator_display_name)
+    table["Kazalnik"] = table["Kazalnik"].apply(get_national_metric_display_name)
     table = streamlit_safe_dataframe(table)
     st.dataframe(table, width="stretch", hide_index=True)
 
@@ -3896,7 +3910,7 @@ def render_national_all_indicators_table(sector_df: pd.DataFrame, sector_id: str
         _, change_label = national_kpi_change(row.get(2019), row.get(2024), row["format_type"])
         table_rows.append(
             {
-                "Kazalnik": get_indicator_display_name(str(row["metric"])),
+                "Kazalnik": get_national_metric_display_name(str(row["metric"])),
                 "2019": format_national_kpi_value(row.get(2019), row["format_type"], row["unit"]),
                 "2023": format_national_kpi_value(row.get(2023), row["format_type"], row["unit"]),
                 "2024": format_national_kpi_value(row.get(2024), row["format_type"], row["unit"]),

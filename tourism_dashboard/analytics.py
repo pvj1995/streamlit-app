@@ -263,9 +263,33 @@ def sum_numeric_column(df: pd.DataFrame, *candidates: str) -> float:
     return float(series.sum(skipna=True))
 
 
+def year_label_candidates(indicator: str, *base_labels: str) -> list[str]:
+    year = get_indicator_year(indicator)
+    candidates: list[str] = []
+    for base_label in base_labels:
+        yearly_label = label_for_indicator_year(base_label, indicator)
+        replaced_year_label = col_for_year(base_label, year)
+        for candidate in (yearly_label, replaced_year_label, base_label):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
+
+
+def get_yearly_numeric_column(df: pd.DataFrame, indicator: str, *base_labels: str) -> pd.Series | None:
+    return get_numeric_column(df, *year_label_candidates(indicator, *base_labels))
+
+
+def sum_yearly_numeric_column(df: pd.DataFrame, indicator: str, *base_labels: str) -> float:
+    series = get_yearly_numeric_column(df, indicator, *base_labels)
+    if series is None:
+        return np.nan
+    return float(series.sum(skipna=True))
+
+
 def get_i55_revenue_series(indicator: str, df: pd.DataFrame) -> pd.Series | None:
-    return get_numeric_column(
+    return get_yearly_numeric_column(
         df,
+        indicator,
         label_for_indicator_year("Prihodki reg.podjetij in s.p. v Nast.gost.dej. (I 55)", indicator),
         "Prihodki reg.podjetij in s.p. v Nast.gost.dej. (I 55) 2024",
         "Prihodki reg.podjetij in s.p. v nastanitveni dejav. (I 55)",
@@ -280,15 +304,15 @@ def get_precomputed_indicator_value(
     if region_name is None:
         return None
 
-    if "Gibanje GINI Indeksa prenoč. 2024/2019" in indicator:
+    if "Gibanje GINI Indeksa sezonskosti vseh prenočitev 2024/2019" in indicator:
         return GINI_CHANGE_2024_2019.get(region_name)
-    if "GINI Indeks - sezonskost prenočitev - 2025" in indicator:
+    if "GINI Indeks - sezonskost vseh prenočitev - 2025" in indicator:
         return GINI_2025_VALUES.get(region_name)
-    if "GINI Indeks - sezonskost prenočitev - 2019" in indicator:
+    if "GINI Indeks - sezonskost vseh prenočitev - 2019" in indicator:
         return GINI_2019_VALUES.get(region_name)
-    if "Gibanje GINI Indeksa prenoč. 2025/2019" in indicator:
+    if "Gibanje GINI Indeksa sezonskosti vseh prenočitev 2025/2019" in indicator:
         return GINI_CHANGE_2025_2019.get(region_name)
-    if "Gibanje GINI Indeksa prenoč. 2025/2024" in indicator:
+    if "Gibanje GINI Indeksa sezonskosti vseh prenočitev 2025/2024" in indicator:
         return GINI_CHANGE_2025_2024.get(region_name)
 
     if "Celotni prihodki v nastan. dejav. na prenočitev" in indicator:
@@ -296,7 +320,7 @@ def get_precomputed_indicator_value(
         if revenue is None:
             return np.nan
         numerator = revenue.sum(skipna=True)
-        denominator = sum_numeric_column(df, "Prenočitve turistov SKUPAJ - 2024")
+        denominator = sum_yearly_numeric_column(df, indicator, "Prenočitve turistov SKUPAJ - 2024")
         return numerator / denominator if denominator else np.nan
 
     if "Ocenjeni prihodki iz nast. dejav. na prenočitev" in indicator:
@@ -304,7 +328,7 @@ def get_precomputed_indicator_value(
         if revenue is None:
             return np.nan
         numerator = revenue.sum(skipna=True) * 0.8
-        denominator = sum_numeric_column(df, "Prenočitve turistov SKUPAJ - 2024")
+        denominator = sum_yearly_numeric_column(df, indicator, "Prenočitve turistov SKUPAJ - 2024")
         return numerator / denominator if denominator else np.nan
 
     if "Ocenjeni prihodki iz nast.dej. na prodano sobo (ned.enoto)" in indicator:
@@ -312,16 +336,31 @@ def get_precomputed_indicator_value(
         if revenue is None:
             return np.nan
         numerator = (revenue * 0.8).sum(skipna=True)
-        hoteli = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati")
-        druge_enote = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet")
-        kampi = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi")
+        hoteli = sum_yearly_numeric_column(
+            df,
+            indicator,
+            "Število sob (nedeljivih enot) - Hoteli in podobni obrati",
+            "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati",
+        )
+        druge_enote = sum_yearly_numeric_column(
+            df,
+            indicator,
+            "Število sob (nedeljivih enot) - Druge vrste kapacitet",
+            "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet",
+        )
+        kampi = sum_yearly_numeric_column(
+            df,
+            indicator,
+            "Število sob (nedeljivih enot) - Kampi",
+            "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi",
+        )
         vse_enote = hoteli + druge_enote + kampi
         if pd.isna(vse_enote) or not vse_enote:
             return np.nan
         hoteli_zasedenost = 1.6 * (hoteli / vse_enote)
         kampi_zasedenost = 2.5 * (kampi / vse_enote)
         druge_zasedenost = 2 * (druge_enote / vse_enote)
-        prenocitve = sum_numeric_column(df, "Prenočitve turistov SKUPAJ - 2024")
+        prenocitve = sum_yearly_numeric_column(df, indicator, "Prenočitve turistov SKUPAJ - 2024")
         denominator = prenocitve / (
             hoteli_zasedenost + kampi_zasedenost + druge_zasedenost
         )
@@ -332,9 +371,24 @@ def get_precomputed_indicator_value(
         if revenue is None:
             return np.nan
         numerator = (revenue * 0.8).sum(skipna=True)
-        hoteli = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati")
-        druge_enote = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet")
-        kampi = sum_numeric_column(df, "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi")
+        hoteli = sum_yearly_numeric_column(
+            df,
+            indicator,
+            "Število sob (nedeljivih enot) - Hoteli in podobni obrati",
+            "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati",
+        )
+        druge_enote = sum_yearly_numeric_column(
+            df,
+            indicator,
+            "Število sob (nedeljivih enot) - Druge vrste kapacitet",
+            "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet",
+        )
+        kampi = sum_yearly_numeric_column(
+            df,
+            indicator,
+            "Število sob (nedeljivih enot) - Kampi",
+            "Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi",
+        )
         denominator = (hoteli + druge_enote) * 365 + kampi * 153
         return numerator / denominator if denominator else np.nan
 

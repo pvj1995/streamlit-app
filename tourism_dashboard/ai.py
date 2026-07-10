@@ -268,6 +268,8 @@ def ensure_market_section(text: str, market_analysis: Dict[str, Any] | None) -> 
         return text
 
     insertion_markers = [
+        "\n**4. Ekonomski in poslovni turistični kazalniki**",
+        "\n4. Ekonomski in poslovni turistični kazalniki",
         "\n**4. Ekonomsko-poslovni kazalniki turistične dejavnosti**",
         "\n4. Ekonomsko-poslovni kazalniki turistične dejavnosti",
         "\n**4 konkretna priporočila**",
@@ -405,9 +407,9 @@ def generate_region_ai_commentary(
         "Kratek celosten komentar\n"
         "1. Družbeni kazalniki\n"
         "2. Okoljski kazalniki\n"
-        "3. Ekonomski nastanitveni in tržni kazalniki\n"
+        "3. Nastanitveni tržni kazalniki\n"
         "3.1. Struktura in gibanje prenočitev po skupinah trgov\n"
-        "4. Ekonomsko-poslovni kazalniki turistične dejavnosti\n"
+        "4. Ekonomski in poslovni turistični kazalniki\n"
         "5 konkretnih priporočil\n"
         "2) Pri poglavjih 1, 2, 3 in 4 jasno loči podnaslova Prednosti in Tveganja ter pri teh poglavjih napiši maksimalno 3 tveganja in 3 prednosti\n"
         "3) V podpoglavju 3.1 analiziraj strukturo trgov v zadnjem opazovanem letu ter komentiraj rast posameznih trgov "

@@ -67,8 +67,8 @@ Kazalniki so razporejeni v skupine:
 
 - `Družbeni kazalniki`
 - `Okoljski kazalniki`
-- `Ekonomski nastanitveni in tržni turistični kazalniki`
-- `Ekonomsko poslovni kazalniki turistične dejavnosti`
+- `Nastanitveni tržni kazalniki`
+- `Ekonomski in poslovni turistični kazalniki`
 
 Izbira skupine vpliva na sezname kazalnikov, top/bottom analizo in prikaz v
 posameznih tabelah.

@@ -47,37 +47,65 @@ AI_BANNER_FILENAME = "Banner AI analizy.jpg"
 FOOTER_LOGO_FILENAME = "footer_logo.jpg"
 COMPASS_INDEX_LOGO_FILENAME = "Tourism compass index.png"
 
+ACCOMMODATION_MARKET_GROUP = "Nastanitveni tržni kazalniki"
+ECONOMIC_BUSINESS_GROUP = "Ekonomski in poslovni turistični kazalniki"
+LEGACY_ACCOMMODATION_MARKET_GROUPS = {
+    "Ekonomski nastanitveni in tržni turistični kazalniki",
+    "Ekonomski nastanitveni in tržni kazalniki",
+}
+LEGACY_ECONOMIC_BUSINESS_GROUPS = {
+    "Ekonomsko poslovni kazalniki turistične dejavnosti",
+    "Ekonomsko-poslovni kazalniki turistične dejavnosti",
+    "Ekonomski poslovni turistični kazalniki",
+}
+GROUP_NAME_ALIASES = {
+    legacy_group: ACCOMMODATION_MARKET_GROUP
+    for legacy_group in LEGACY_ACCOMMODATION_MARKET_GROUPS
+}
+GROUP_NAME_ALIASES.update(
+    {
+        legacy_group: ECONOMIC_BUSINESS_GROUP
+        for legacy_group in LEGACY_ECONOMIC_BUSINESS_GROUPS
+    }
+)
+
+
+def normalize_group_name(group_name: str) -> str:
+    normalized = str(group_name).strip()
+    return GROUP_NAME_ALIASES.get(normalized, normalized)
+
+
 GROUP_COLOR_EMOJI = {
     "Družbeni kazalniki": "🟦",
     "Okoljski kazalniki": "🟩",
-    "Ekonomski nastanitveni in tržni turistični kazalniki": "🟥",
-    "Ekonomsko poslovni kazalniki turistične dejavnosti": "🟪",
+    ACCOMMODATION_MARKET_GROUP: "🟥",
+    ECONOMIC_BUSINESS_GROUP: "🟪",
 }
 
 GROUP_CHART_COLORS = {
     "Krovni Index": "#2563eb",
     "Družbeni kazalniki": "#2563eb",
     "Okoljski kazalniki": "#16a34a",
-    "Ekonomski nastanitveni in tržni turistični kazalniki": "#dc2626",
-    "Ekonomsko poslovni kazalniki turistične dejavnosti": "#7c3aed",
+    ACCOMMODATION_MARKET_GROUP: "#dc2626",
+    ECONOMIC_BUSINESS_GROUP: "#7c3aed",
 }
 
 GROUP_CHART_COLOR_SCALES = {
     "Krovni Index": ["#dbeafe", "#93c5fd", "#2563eb", "#1e40af"],
     "Družbeni kazalniki": ["#dbeafe", "#93c5fd", "#2563eb", "#1e40af"],
     "Okoljski kazalniki": ["#dcfce7", "#86efac", "#16a34a", "#166534"],
-    "Ekonomski nastanitveni in tržni turistični kazalniki": ["#fee2e2", "#fca5a5", "#dc2626", "#991b1b"],
-    "Ekonomsko poslovni kazalniki turistične dejavnosti": ["#ede9fe", "#c4b5fd", "#7c3aed", "#5b21b6"],
+    ACCOMMODATION_MARKET_GROUP: ["#fee2e2", "#fca5a5", "#dc2626", "#991b1b"],
+    ECONOMIC_BUSINESS_GROUP: ["#ede9fe", "#c4b5fd", "#7c3aed", "#5b21b6"],
 }
 
 GROUP_BUTTON_IMAGE_FILES = {
     "__all__": "Button - Vsi kazalniki.png",
     "Družbeni kazalniki": "Button - Družbeni kazalniki.png",
     "Okoljski kazalniki": "Button - Okoljski kazalniki.png",
-    "Ekonomski nastanitveni in tržni turistični kazalniki": (
+    ACCOMMODATION_MARKET_GROUP: (
         "Button - Ekonomski nastanitveni in tržni turistični kazalniki.png"
     ),
-    "Ekonomsko poslovni kazalniki turistične dejavnosti": (
+    ECONOMIC_BUSINESS_GROUP: (
         "Button - Ekonomsko poslovni kazalniki turistične dejavnosti.png"
     ),
 }
@@ -85,8 +113,8 @@ GROUP_BUTTON_IMAGE_FILES = {
 TOP_BOTTOM_GROUP_LIMITS = {
     "Družbeni kazalniki": 4,
     "Okoljski kazalniki": 3,
-    "Ekonomski nastanitveni in tržni turistični kazalniki": 5,
-    "Ekonomsko poslovni kazalniki turistične dejavnosti": 5,
+    ACCOMMODATION_MARKET_GROUP: 5,
+    ECONOMIC_BUSINESS_GROUP: 5,
 }
 TOP_BOTTOM_GROUP_ORDER = list(TOP_BOTTOM_GROUP_LIMITS.keys())
 
@@ -443,7 +471,7 @@ INDIKATORJI_Z_INDEKSI = {
 }
 
 INDIKATORJI_Z_OPOMBO = {
-    "Ekonomsko poslovni kazalniki turistične dejavnosti",
+    ECONOMIC_BUSINESS_GROUP,
     "Zaposleni v Gostinstvu (I) v registr.podjetjih in s.p.",
     "Zaposleni v nastan.dejav. (I55) v registr.podjetjih in s.p.",
     "Vsi delovni aktivni na območju",
