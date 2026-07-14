@@ -32,8 +32,14 @@ from tourism_dashboard.config import (  # noqa: E402
     DASHBOARD_MAPPING_FRAME_KEY,
     DASHBOARD_MARKET_GROWTH_FRAME_KEY,
     DASHBOARD_NATIONAL_KPI_FRAME_KEY,
+    DASHBOARD_NATIONAL_KPI_INVESTMENTS_FRAME_KEY,
+    DASHBOARD_NATIONAL_KPI_INVESTMENTS_SUMMARY_FRAME_KEY,
+    DASHBOARD_NATIONAL_KPI_MARKET_FRAME_KEY,
     COMPASS_INDEX_SHEETS,
     COMPASS_INDEX_XLSX_FILENAME,
+    NATIONAL_KPI_INVESTMENTS_SHEET_NAME,
+    NATIONAL_KPI_INVESTMENTS_SUMMARY_SHEET_NAME,
+    NATIONAL_KPI_MARKET_ANALYSIS_SHEET_NAME,
     NATIONAL_KPI_SHEET_NAME,
     NATIONAL_KPI_XLSX_FILENAME,
     YEARLY_INDICATOR_XLSX_FILENAME,
@@ -217,16 +223,42 @@ def build_frames() -> list[FrameSpec]:
     ]
 
     if national_kpi_path.exists():
-        frames.append(
-            FrameSpec(
-                frame_key=DASHBOARD_NATIONAL_KPI_FRAME_KEY,
-                df=pd.read_excel(national_kpi_path, sheet_name=NATIONAL_KPI_SHEET_NAME),
-                source_filename=national_kpi_path.name,
-                sheet_name=NATIONAL_KPI_SHEET_NAME,
-                frame_type="national_kpi",
-                frame_kind="kpi_long",
+        national_kpi_sheets = pd.ExcelFile(national_kpi_path).sheet_names
+        national_sheet_specs = [
+            (
+                NATIONAL_KPI_SHEET_NAME,
+                DASHBOARD_NATIONAL_KPI_FRAME_KEY,
+                "kpi_long",
+            ),
+            (
+                NATIONAL_KPI_MARKET_ANALYSIS_SHEET_NAME,
+                DASHBOARD_NATIONAL_KPI_MARKET_FRAME_KEY,
+                "i55_market_analysis_long",
+            ),
+            (
+                NATIONAL_KPI_INVESTMENTS_SHEET_NAME,
+                DASHBOARD_NATIONAL_KPI_INVESTMENTS_FRAME_KEY,
+                "i55_investments_long",
+            ),
+            (
+                NATIONAL_KPI_INVESTMENTS_SUMMARY_SHEET_NAME,
+                DASHBOARD_NATIONAL_KPI_INVESTMENTS_SUMMARY_FRAME_KEY,
+                "i55_investments_summary",
+            ),
+        ]
+        for sheet_name, frame_key, frame_kind in national_sheet_specs:
+            if sheet_name not in national_kpi_sheets:
+                continue
+            frames.append(
+                FrameSpec(
+                    frame_key=frame_key,
+                    df=pd.read_excel(national_kpi_path, sheet_name=sheet_name),
+                    source_filename=national_kpi_path.name,
+                    sheet_name=sheet_name,
+                    frame_type="national_kpi",
+                    frame_kind=frame_kind,
+                )
             )
-        )
 
     if compass_index_path.exists():
         for sheet_name in COMPASS_INDEX_SHEETS:
