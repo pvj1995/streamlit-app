@@ -3998,6 +3998,296 @@ def format_national_extra_value(value: Any, format_type: str, unit: str = "") ->
     return format_national_kpi_value(value, format_type, unit)
 
 
+def normalize_national_market_key(value: Any) -> str:
+    return (
+        normalize_name(str(value or ""))
+        .lower()
+        .replace("č", "c")
+        .replace("š", "s")
+        .replace("ž", "z")
+    )
+
+
+def is_national_market_reference_category(category: Any) -> bool:
+    normalized = normalize_national_market_key(category)
+    return normalized == "slovenija" or "skupaj" in normalized
+
+
+def is_national_market_total_share_reference(metric: Any, category: Any) -> bool:
+    metric_name = normalize_national_market_key(metric)
+    category_name = normalize_national_market_key(category)
+    return metric_name.startswith("delez") and "skupaj" in category_name
+
+
+def is_national_market_additive_metric(metric: Any, format_type: Any, unit: Any) -> bool:
+    if str(format_type or "").strip() == "percent_decimal":
+        return False
+
+    metric_name = normalize_national_market_key(metric)
+    unit_name = normalize_national_market_key(unit).replace(" ", "")
+    if any(keyword in metric_name for keyword in ["povprecna doba", "zasedenost", "stopnja", "delez"]):
+        return False
+    return metric_name.startswith("stevilo") and unit_name in {"st.", "st", "stevilo"}
+
+
+def national_market_category_order(rows: pd.DataFrame) -> dict[str, int]:
+    categories = rows["category"].dropna().astype(str).drop_duplicates().tolist()
+    reference_categories = [category for category in categories if is_national_market_reference_category(category)]
+    detail_categories = [category for category in categories if category not in set(reference_categories)]
+    ordered_categories = [*reference_categories, *detail_categories]
+    return {category: index for index, category in enumerate(ordered_categories)}
+
+
+def get_national_market_section_display_name(section: Any) -> str:
+    section_name = normalize_name(str(section or ""))
+    return re.sub(
+        r"^Kazalniki prenočitev\s+(?:19|20)\d{2}\s+po vrstah občin$",
+        "Kazalniki prenočitev po vrstah občin",
+        section_name,
+    )
+
+
+def is_national_i55_investment_input_section(section: Any) -> bool:
+    return normalize_national_market_key(section) == "podatki za izracun kazalnikov"
+
+
+def is_national_i55_rooms_metric(metric: Any) -> bool:
+    metric_name = normalize_national_market_key(metric)
+    return "stevilo sob" in metric_name and "dejavnosti i 55" in metric_name
+
+
+NATIONAL_I55_ROOM_INVESTMENT_AVERAGE_METRIC = (
+    "Povprečna višina naložb na sobo na leto v celotnem obdobju 2007-2024"
+)
+NATIONAL_I55_ROOM_INVESTMENT_AVERAGE_DISPLAY_METRIC = (
+    "Povprečna višina naložb na sobo na leto v celotnem obdobju 2007-2024 – realno na cene 2007"
+)
+
+
+def get_national_i55_investment_metric_display_name(metric: Any) -> str:
+    metric_name = str(metric or "").strip()
+    if normalize_name(metric_name) == normalize_name(NATIONAL_I55_ROOM_INVESTMENT_AVERAGE_METRIC):
+        return NATIONAL_I55_ROOM_INVESTMENT_AVERAGE_DISPLAY_METRIC
+    return metric_name
+
+
+def add_national_market_chart_columns(rows: pd.DataFrame) -> pd.DataFrame:
+    chart_df = rows.copy()
+    chart_df["Vrednost prikaz"] = chart_df.apply(
+        lambda row: float(row["value"]) * 100.0
+        if str(row.get("format_type")) == "percent_decimal"
+        else float(row["value"]),
+        axis=1,
+    )
+    chart_df["Vrednost"] = chart_df.apply(
+        lambda row: format_national_extra_value(row["value"], row["format_type"], row["unit"]),
+        axis=1,
+    )
+    chart_df["__is_reference__"] = chart_df["category"].apply(is_national_market_reference_category)
+    return chart_df
+
+
+def get_national_market_chart_context(
+    chart_df: pd.DataFrame,
+    selected_metric: Any,
+) -> tuple[str, str, bool]:
+    chart_format_type = str(chart_df["format_type"].dropna().iloc[0] if not chart_df["format_type"].dropna().empty else "")
+    chart_unit = str(chart_df["unit"].dropna().iloc[0] if not chart_df["unit"].dropna().empty else "")
+    additive_metric = is_national_market_additive_metric(selected_metric, chart_format_type, chart_unit)
+    return chart_format_type, chart_unit, additive_metric
+
+
+def render_national_market_single_year_chart(chart_df: pd.DataFrame, selected_metric: Any) -> None:
+    chart_format_type, _, additive_metric = get_national_market_chart_context(chart_df, selected_metric)
+    chart_df = add_national_market_chart_columns(chart_df)
+    reference_rows = chart_df[chart_df["__is_reference__"]].copy()
+    bar_df = chart_df[~chart_df["__is_reference__"]].copy()
+    reference_row: pd.Series | None = None
+    if not additive_metric and not reference_rows.empty:
+        line_candidates = reference_rows[
+            ~reference_rows.apply(
+                lambda row: is_national_market_total_share_reference(selected_metric, row["category"]),
+                axis=1,
+            )
+        ]
+        if not line_candidates.empty:
+            reference_row = line_candidates.iloc[0]
+
+    if bar_df.empty:
+        st.info("Za izbrani kazalnik in leto ni razpoložljivih kategorij za graf.")
+        return
+
+    bar_df = bar_df.sort_values("Vrednost prikaz", ascending=True)
+    x_values = bar_df["Vrednost prikaz"].astype(float).tolist()
+    if reference_row is not None:
+        x_values.append(float(reference_row["Vrednost prikaz"]))
+    x_min = min([0.0, *x_values])
+    x_max = max([0.0, *x_values])
+    x_padding = max((x_max - x_min) * 0.08, 1.0)
+
+    fig = px.bar(
+        bar_df,
+        x="Vrednost prikaz",
+        y="category",
+        orientation="h",
+        color="Vrednost prikaz",
+        color_continuous_scale="Blues",
+        custom_data=["category", "Vrednost"],
+    )
+    fig.update_traces(hovertemplate="<b>%{customdata[0]}</b><br>Vrednost: %{customdata[1]}<extra></extra>")
+    if reference_row is not None:
+        reference_value = float(reference_row["Vrednost prikaz"])
+        reference_label = str(reference_row["category"])
+        reference_value_label = str(reference_row["Vrednost"])
+        fig.add_vline(
+            x=reference_value,
+            line_color=SECONDARY_REFERENCE_COLOR,
+            line_dash="dash",
+            line_width=2,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                line=dict(color=SECONDARY_REFERENCE_COLOR, dash="dash", width=2),
+                name=f"{reference_label}: {reference_value_label}",
+                hoverinfo="skip",
+                showlegend=True,
+            )
+        )
+    fig.update_layout(
+        margin=dict(t=20, b=20, l=10, r=10),
+        xaxis_title="Delež (%)" if chart_format_type == "percent_decimal" else "Vrednost",
+        yaxis_title=None,
+        coloraxis_showscale=False,
+        height=max(420, 34 * len(bar_df) + 90),
+        legend_title_text="Primerjalna vrednost",
+    )
+    fig.update_xaxes(range=[x_min - x_padding, x_max + x_padding])
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_national_market_year_comparison_chart(metric_rows: pd.DataFrame, selected_metric: Any) -> None:
+    chart_df = metric_rows.copy()
+    chart_df["__year_numeric__"] = pd.to_numeric(chart_df["year"], errors="coerce")
+    chart_df = chart_df.dropna(subset=["__year_numeric__"])
+    if chart_df["__year_numeric__"].nunique() < 2:
+        st.info("Za primerjavo po letih sta potrebni vsaj dve leti podatkov.")
+        return
+
+    chart_df["Leto"] = chart_df["__year_numeric__"].astype(int)
+    chart_format_type, chart_unit, additive_metric = get_national_market_chart_context(chart_df, selected_metric)
+    chart_df = add_national_market_chart_columns(chart_df)
+    reference_rows = chart_df[chart_df["__is_reference__"]].copy()
+    line_df = chart_df[~chart_df["__is_reference__"]].copy()
+    reference_line_df = pd.DataFrame()
+    if not additive_metric and not reference_rows.empty:
+        reference_line_df = reference_rows[
+            ~reference_rows.apply(
+                lambda row: is_national_market_total_share_reference(selected_metric, row["category"]),
+                axis=1,
+            )
+        ].copy()
+
+    if line_df.empty:
+        st.info("Za izbrani kazalnik ni razpoložljivih kategorij za primerjavo po letih.")
+        return
+
+    yaxis_title = "Delež (%)" if chart_format_type == "percent_decimal" else (chart_unit or "Vrednost")
+    fig = px.line(
+        line_df.sort_values(["category", "Leto"]),
+        x="Leto",
+        y="Vrednost prikaz",
+        color="category",
+        markers=True,
+        custom_data=["category", "Vrednost"],
+    )
+    fig.update_traces(hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>")
+
+    if not reference_line_df.empty:
+        for _, reference_df in reference_line_df.groupby("category", sort=False):
+            reference_df = reference_df.sort_values("Leto")
+            if reference_df.empty:
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=reference_df["Leto"],
+                    y=reference_df["Vrednost prikaz"],
+                    mode="lines+markers",
+                    name=str(reference_df["category"].iloc[0]),
+                    line=dict(color=SECONDARY_REFERENCE_COLOR, dash="dash", width=2),
+                    marker=dict(size=7),
+                    customdata=reference_df[["category", "Vrednost"]],
+                    hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>",
+                )
+            )
+
+    fig.update_layout(
+        margin=dict(t=20, b=20, l=10, r=10),
+        legend_title_text="Kategorija",
+        xaxis_title="Leto",
+        yaxis_title=yaxis_title,
+        height=max(460, 26 * line_df["category"].nunique() + 260),
+    )
+    st.plotly_chart(fig, width="stretch")
+
+
+def render_national_i55_investment_input_chart(chart_df: pd.DataFrame) -> None:
+    fig = go.Figure()
+    colors = ["#2563eb", "#0f766e", "#dc2626", "#7c3aed"]
+    left_axis_rows = chart_df[~chart_df["metric"].apply(is_national_i55_rooms_metric)].copy()
+    room_rows = chart_df[chart_df["metric"].apply(is_national_i55_rooms_metric)].copy()
+
+    for index, (metric, metric_rows) in enumerate(left_axis_rows.groupby("metric", sort=False)):
+        metric_rows = metric_rows.sort_values("Leto")
+        fig.add_trace(
+            go.Scatter(
+                x=metric_rows["Leto"],
+                y=metric_rows["Vrednost prikaz"],
+                mode="lines+markers",
+                name=str(metric),
+                line=dict(color=colors[index % len(colors)], width=2),
+                marker=dict(size=7),
+                customdata=metric_rows[["metric", "Vrednost"]],
+                hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>",
+                yaxis="y",
+            )
+        )
+
+    for index, (metric, metric_rows) in enumerate(room_rows.groupby("metric", sort=False), start=len(left_axis_rows)):
+        metric_rows = metric_rows.sort_values("Leto")
+        fig.add_trace(
+            go.Scatter(
+                x=metric_rows["Leto"],
+                y=metric_rows["Vrednost prikaz"],
+                mode="lines+markers",
+                name=str(metric),
+                line=dict(color=colors[index % len(colors)], width=3, dash="dot"),
+                marker=dict(size=8),
+                customdata=metric_rows[["metric", "Vrednost"]],
+                hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>",
+                yaxis="y2",
+            )
+        )
+
+    fig.update_layout(
+        margin=dict(t=20, b=20, l=10, r=10),
+        legend_title_text="Kazalnik",
+        xaxis_title="Leto",
+        yaxis=dict(title="Prihodki od prodaje (1000 EUR)", rangemode="tozero"),
+        yaxis2=dict(
+            title="Število sob (nedeljivih enot)",
+            overlaying="y",
+            side="right",
+            range=[0, 70000],
+            tickformat=",",
+            showgrid=False,
+        ),
+    )
+    st.plotly_chart(fig, width="stretch")
+
+
 def render_national_i55_investments() -> None:
     investment_df = load_national_i55_investments_data()
     summary_df = load_national_i55_investments_summary_data()
@@ -4016,6 +4306,7 @@ def render_national_i55_investments() -> None:
         key="national_i55_investment_section",
     )
     rows = investment_df[investment_df["section"].astype(str) == selected_section].copy()
+    rows["metric"] = rows["metric"].apply(get_national_i55_investment_metric_display_name)
     metric_options = rows["metric"].dropna().drop_duplicates().tolist()
     default_metrics = metric_options[: min(4, len(metric_options))]
     selected_metrics = st.multiselect(
@@ -4039,29 +4330,32 @@ def render_national_i55_investments() -> None:
             lambda row: format_national_extra_value(row["value"], row["format_type"], row["unit"]),
             axis=1,
         )
-        yaxis_title = (
-            "Delež (%)"
-            if (chart_df["format_type"] == "percent_decimal").all()
-            else str(chart_df["unit"].iloc[0] or "Vrednost")
-        )
-        fig = px.line(
-            chart_df,
-            x="Leto",
-            y="Vrednost prikaz",
-            color="metric",
-            markers=True,
-            custom_data=["metric", "Vrednost"],
-        )
-        fig.update_traces(
-            hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>"
-        )
-        fig.update_layout(
-            margin=dict(t=20, b=20, l=10, r=10),
-            legend_title_text="Kazalnik",
-            yaxis_title=yaxis_title,
-            xaxis_title="Leto",
-        )
-        st.plotly_chart(fig, width="stretch")
+        if is_national_i55_investment_input_section(selected_section):
+            render_national_i55_investment_input_chart(chart_df)
+        else:
+            yaxis_title = (
+                "Delež (%)"
+                if (chart_df["format_type"] == "percent_decimal").all()
+                else str(chart_df["unit"].iloc[0] or "Vrednost")
+            )
+            fig = px.line(
+                chart_df,
+                x="Leto",
+                y="Vrednost prikaz",
+                color="metric",
+                markers=True,
+                custom_data=["metric", "Vrednost"],
+            )
+            fig.update_traces(
+                hovertemplate="<b>%{customdata[0]}</b><br>Leto: %{x}<br>Vrednost: %{customdata[1]}<extra></extra>"
+            )
+            fig.update_layout(
+                margin=dict(t=20, b=20, l=10, r=10),
+                legend_title_text="Kazalnik",
+                yaxis_title=yaxis_title,
+                xaxis_title="Leto",
+            )
+            st.plotly_chart(fig, width="stretch")
 
     table = rows.copy()
     table["Leto"] = table["year"].astype(str)
@@ -4101,71 +4395,70 @@ def render_national_i55_market_analysis() -> None:
         st.info("Podatki za analizo izbranih tržnih kazalnikov trenutno niso na voljo.")
         return
 
+    market_df = market_df.copy()
+    market_df["__section_display__"] = market_df["section"].apply(get_national_market_section_display_name)
+    section_options = market_df["__section_display__"].dropna().astype(str).drop_duplicates().tolist()
+    if not section_options:
+        st.info("Podatki za analizo izbranih tržnih kazalnikov nimajo opredeljenih sklopov.")
+        return
+
     selected_section = st.selectbox(
         "Sklop tržnih kazalnikov",
-        market_df["section"].dropna().drop_duplicates().tolist(),
-        key="national_i55_market_section",
+        section_options,
+        key="national_i55_market_section_grouped",
     )
-    rows = market_df[market_df["section"] == selected_section].copy()
-    metric_options = rows["metric"].dropna().drop_duplicates().tolist()
+    rows = market_df[market_df["__section_display__"].astype(str) == selected_section].copy()
+    metric_options = rows["metric"].dropna().astype(str).drop_duplicates().tolist()
+    if not metric_options:
+        st.info("Za izbrani sklop ni razpoložljivih kazalnikov.")
+        return
+
     selected_metric = st.selectbox(
         "Kazalnik",
         metric_options,
-        key=f"national_i55_market_metric_{normalize_name(selected_section)}",
+        key=f"national_i55_market_metric_{normalize_name(str(selected_section))}",
     )
-    metric_rows = rows[rows["metric"] == selected_metric].copy()
+    metric_rows = rows[rows["metric"].astype(str) == selected_metric].copy()
     year_options = metric_rows["year"].dropna().drop_duplicates().tolist()
     numeric_years = sorted([int(float(year)) for year in year_options if str(year).replace(".0", "").isdigit()])
-    if numeric_years:
+    display_mode = "Posamično leto"
+    if len(numeric_years) > 1:
+        display_mode = st.radio(
+            "Prikaz",
+            ["Primerjava po letih", "Posamično leto"],
+            horizontal=True,
+            key=f"national_i55_market_mode_{normalize_name(str(selected_section))}_{normalize_name(str(selected_metric))}",
+        )
+
+    if display_mode == "Primerjava po letih":
+        render_national_market_year_comparison_chart(metric_rows, selected_metric)
+    elif numeric_years:
         selected_year = st.selectbox(
             "Leto",
             numeric_years,
             index=len(numeric_years) - 1,
-            key=f"national_i55_market_year_{normalize_name(selected_section)}_{normalize_name(selected_metric)}",
+            key=(
+                "national_i55_market_year_"
+                f"{normalize_name(str(selected_section))}_{normalize_name(str(selected_metric))}"
+            ),
         )
         chart_df = metric_rows[pd.to_numeric(metric_rows["year"], errors="coerce") == selected_year].copy()
+        if not chart_df.empty:
+            render_national_market_single_year_chart(chart_df, selected_metric)
     else:
         selected_year = str(year_options[-1]) if year_options else ""
         chart_df = metric_rows[metric_rows["year"].astype(str) == selected_year].copy()
-
-    if not chart_df.empty:
-        chart_df["Vrednost prikaz"] = chart_df.apply(
-            lambda row: float(row["value"]) * 100.0
-            if str(row.get("format_type")) == "percent_decimal"
-            else float(row["value"]),
-            axis=1,
-        )
-        chart_df["Vrednost"] = chart_df.apply(
-            lambda row: format_national_extra_value(row["value"], row["format_type"], row["unit"]),
-            axis=1,
-        )
-        fig = px.bar(
-            chart_df.sort_values("Vrednost prikaz", ascending=True),
-            x="Vrednost prikaz",
-            y="category",
-            orientation="h",
-            color="Vrednost prikaz",
-            color_continuous_scale="Blues",
-            custom_data=["category", "Vrednost"],
-        )
-        fig.update_traces(
-            hovertemplate="<b>%{customdata[0]}</b><br>Vrednost: %{customdata[1]}<extra></extra>"
-        )
-        fig.update_layout(
-            margin=dict(t=20, b=20, l=10, r=10),
-            xaxis_title="Delež (%)" if (chart_df["format_type"] == "percent_decimal").all() else "Vrednost",
-            yaxis_title=None,
-            coloraxis_showscale=False,
-            height=max(420, 34 * len(chart_df) + 90),
-        )
-        st.plotly_chart(fig, width="stretch")
+        if not chart_df.empty:
+            render_national_market_single_year_chart(chart_df, selected_metric)
 
     display_rows = metric_rows.copy()
+    display_rows["category"] = display_rows["category"].astype(str)
     display_rows["Leto"] = display_rows["year"].astype(str)
     display_rows["Vrednost"] = display_rows.apply(
         lambda row: format_national_extra_value(row["value"], row["format_type"], row["unit"]),
         axis=1,
     )
+    category_order = national_market_category_order(display_rows)
     table = display_rows.pivot_table(
         index="category",
         columns="Leto",
@@ -4173,6 +4466,8 @@ def render_national_i55_market_analysis() -> None:
         aggfunc="first",
     ).reset_index()
     table = table.rename(columns={"category": "Kategorija"})
+    table["__sort_order__"] = table["Kategorija"].map(category_order).fillna(9999)
+    table = table.sort_values("__sort_order__").drop(columns=["__sort_order__"])
     st.dataframe(streamlit_safe_dataframe(table), width="stretch", hide_index=True)
 
 
