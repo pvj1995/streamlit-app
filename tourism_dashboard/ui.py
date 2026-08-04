@@ -1461,7 +1461,6 @@ def render_market_structure_pie_table(
         st.caption(note_text)
 
 
-ACCOMMODATION_CAPACITY_YEARS = [2019, 2024, 2025]
 ACCOMMODATION_CAPACITY_GROWTH_PERIODS = {
     "2024/2019": (2019, 2024),
     "2025/2019": (2019, 2025),
@@ -1481,6 +1480,41 @@ ACCOMMODATION_CAPACITY_COLOR_MAP = {
     ACCOMMODATION_TYPE_OTHER: "#f59e0b",
     "Skupaj vse vrste obratov": "#0f766e",
     "Skupaj vse vrste kapacitet": "#0f766e",
+}
+
+ACCOMMODATION_CAPACITY_METRIC_IDS: dict[str, dict[str, list[list[str]]]] = {
+    "establishments": {
+        ACCOMMODATION_TYPE_HOTELS: [["stevilo_hotelov_ipd_no"]],
+        ACCOMMODATION_TYPE_CAMPS: [["stevilo_kampov"]],
+        ACCOMMODATION_TYPE_OTHER: [
+            [
+                "stevilo_turisticnih_kmetij_z_nastanitvijo",
+                "stevilo_vseh_drugih_vrst_no",
+            ]
+        ],
+    },
+    "rooms": {
+        ACCOMMODATION_TYPE_HOTELS: [
+            ["struktura_nastanitvenih_kapacitet_sobe_nedeljive_enote_hoteli_in_podobni_obrati"]
+        ],
+        ACCOMMODATION_TYPE_CAMPS: [
+            ["struktura_nastanitvenih_kapacitet_sobe_nedeljive_enote_kampi"]
+        ],
+        ACCOMMODATION_TYPE_OTHER: [
+            ["struktura_nastanitvenih_kapacitet_sobe_nedeljive_enote_druge_vrste_kapacitet"]
+        ],
+    },
+    "beds": {
+        ACCOMMODATION_TYPE_HOTELS: [
+            ["struktura_nastanitvenih_kapacitet_stalna_lezisca_hoteli_in_podobni_obrati"]
+        ],
+        ACCOMMODATION_TYPE_CAMPS: [
+            ["struktura_nastanitvenih_kapacitet_stalna_lezisca_kampi"]
+        ],
+        ACCOMMODATION_TYPE_OTHER: [
+            ["struktura_nastanitvenih_kapacitet_stalna_lezisca_druge_vrste_kapacitet"]
+        ],
+    },
 }
 
 ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
@@ -1511,13 +1545,24 @@ ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
                 ],
             },
             2025: {
-                ACCOMMODATION_TYPE_HOTELS: [["Število hotelov ipd. NO 2025"]],
-                ACCOMMODATION_TYPE_CAMPS: [["Število kampov 2025"]],
+                ACCOMMODATION_TYPE_HOTELS: [
+                    ["Število hotelov ipd. (RNO) 2025"],
+                    ["Število hotelov ipd. NO 2025"],
+                ],
+                ACCOMMODATION_TYPE_CAMPS: [
+                    ["Število kampov (RNO) 2025"],
+                    ["Število kampov 2025"],
+                ],
                 ACCOMMODATION_TYPE_OTHER: [
+                    [
+                        "Število turističnih kmetij z nastanitvijo (RNO) 2025",
+                        "Število vseh drugih vrst nastanitvenih obratov (RNO) 2025",
+                    ],
                     [
                         "Število turističnih kmetij z nastanitvijo 2025",
                         "Število vseh drugih vrst NO 2025",
                     ],
+                    ["Število vseh drugih vrst nastanitvenih obratov (RNO) 2025"],
                     ["Število vseh drugih vrst NO 2025"],
                 ],
             },
@@ -1547,16 +1592,19 @@ ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
             },
             2024: {
                 ACCOMMODATION_TYPE_HOTELS: [
+                    ["Število sob (nedeljivih enot)  - Hoteli in podobni obrati 2024"],
                     ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati"],
                     ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Hoteli in podobni obrati 2024"],
                     ["Število sob v hotelih ipd. NO 2024"],
                 ],
                 ACCOMMODATION_TYPE_CAMPS: [
+                    ["Število sob (nedeljivih enot) - Kampi 2024"],
                     ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi"],
                     ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Kampi 2024"],
                     ["Število enot v kampih 2024"],
                 ],
                 ACCOMMODATION_TYPE_OTHER: [
+                    ["Število sob (nedeljivih enot) - Druge vrste kapacitet 2024"],
                     ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet"],
                     ["Struktura nastanitvenih kapacitet - Sobe (nedeljive enote) - Druge vrste kapacitet 2024"],
                     [
@@ -1567,9 +1615,16 @@ ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
                 ],
             },
             2025: {
-                ACCOMMODATION_TYPE_HOTELS: [["Število sob v hotelih ipd. NO 2025"]],
-                ACCOMMODATION_TYPE_CAMPS: [["Število enot v kampih 2025"]],
+                ACCOMMODATION_TYPE_HOTELS: [
+                    ["Število sob (nedeljivih enot)  - Hoteli in podobni obrati 2025"],
+                    ["Število sob v hotelih ipd. NO 2025"],
+                ],
+                ACCOMMODATION_TYPE_CAMPS: [
+                    ["Število sob (nedeljivih enot) - Kampi 2025"],
+                    ["Število enot v kampih 2025"],
+                ],
                 ACCOMMODATION_TYPE_OTHER: [
+                    ["Število sob (nedeljivih enot) - Druge vrste kapacitet 2025"],
                     [
                         "Število sob v turističnih kmetijah z nastanitvijo 2025",
                         "Število sob v vseh drugih vrstah NO 2025",
@@ -1603,16 +1658,19 @@ ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
             },
             2024: {
                 ACCOMMODATION_TYPE_HOTELS: [
+                    ["Število stalnih ležišč - Hoteli in podobni obrati 2024"],
                     ["Struktura nastanitvenih kapacitet - Stalna ležišča - Hoteli in podobni obrati"],
                     ["Struktura nastanitvenih kapacitet - Stalna ležišča - Hoteli in podobni obrati 2024"],
                     ["Število stalnih ležišč v hotelih ipd. NO 2024"],
                 ],
                 ACCOMMODATION_TYPE_CAMPS: [
+                    ["Število stalnih ležišč - Kampi 2024"],
                     ["Struktura nastanitvenih kapacitet - Stalna ležišča - Kampi"],
                     ["Struktura nastanitvenih kapacitet - Stalna ležišča - Kampi 2024"],
                     ["Število ležišč v kampih 2024"],
                 ],
                 ACCOMMODATION_TYPE_OTHER: [
+                    ["Število stalnih ležišč - Druge vrste nastanitvenih obratov 2024"],
                     ["Struktura nastanitvenih kapacitet - Stalna ležišča - Druge vrste kapacitet"],
                     ["Struktura nastanitvenih kapacitet - Stalna ležišča - Druge vrste kapacitet 2024"],
                     [
@@ -1623,9 +1681,16 @@ ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
                 ],
             },
             2025: {
-                ACCOMMODATION_TYPE_HOTELS: [["Število stalnih ležišč v hotelih ipd. NO 2025"]],
-                ACCOMMODATION_TYPE_CAMPS: [["Število ležišč v kampih 2025"]],
+                ACCOMMODATION_TYPE_HOTELS: [
+                    ["Število stalnih ležišč - Hoteli in podobni obrati 2025"],
+                    ["Število stalnih ležišč v hotelih ipd. NO 2025"],
+                ],
+                ACCOMMODATION_TYPE_CAMPS: [
+                    ["Število stalnih ležišč - Kampi 2025"],
+                    ["Število ležišč v kampih 2025"],
+                ],
                 ACCOMMODATION_TYPE_OTHER: [
+                    ["Število stalnih ležišč - Druge vrste nastanitvenih obratov 2025"],
                     [
                         "Število ležišč v turističnih kmetijah z nastanitvijo 2025",
                         "Število ležišč v vseh drugih vrstah NO 2025",
@@ -1638,16 +1703,141 @@ ACCOMMODATION_CAPACITY_SPECS: dict[str, dict[str, Any]] = {
 }
 
 
+def get_accommodation_metadata_candidates(
+    indicator_metadata_df: pd.DataFrame | None,
+    spec_key: str,
+    year: int,
+) -> dict[str, list[list[str]]]:
+    if indicator_metadata_df is None or indicator_metadata_df.empty:
+        return {}
+    required_columns = {"indicator", "metric_id", "year"}
+    if not required_columns.issubset(indicator_metadata_df.columns):
+        return {}
+
+    metadata = indicator_metadata_df[list(required_columns)].copy()
+    metadata["year"] = pd.to_numeric(metadata["year"], errors="coerce")
+    metadata = metadata[metadata["year"] == int(year)]
+    metric_specs = ACCOMMODATION_CAPACITY_METRIC_IDS.get(spec_key, {})
+    resolved: dict[str, list[list[str]]] = {}
+
+    for category_label, metric_id_groups in metric_specs.items():
+        category_groups: list[list[str]] = []
+        for metric_id_group in metric_id_groups:
+            indicator_group: list[str] = []
+            for metric_id in metric_id_group:
+                matches = metadata[metadata["metric_id"].astype(str) == metric_id]["indicator"]
+                indicators = [str(value).strip() for value in matches.dropna().tolist() if str(value).strip()]
+                if not indicators:
+                    indicator_group = []
+                    break
+                indicator_group.append(indicators[0])
+            if indicator_group:
+                category_groups.append(indicator_group)
+        if category_groups:
+            resolved[category_label] = category_groups
+
+    return resolved
+
+
+def get_accommodation_category_specs(
+    spec_key: str,
+    year: int,
+    indicator_metadata_df: pd.DataFrame | None = None,
+) -> dict[str, list[list[str]]]:
+    spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
+    year_specs = cast(dict[int, dict[str, list[list[str]]]], spec["years"])
+    legacy_specs = year_specs.get(year, {})
+    metadata_specs = get_accommodation_metadata_candidates(indicator_metadata_df, spec_key, year)
+    combined: dict[str, list[list[str]]] = {}
+
+    for category_label in ACCOMMODATION_CAPACITY_CATEGORY_LABELS:
+        seen: set[tuple[str, ...]] = set()
+        candidate_groups: list[list[str]] = []
+        for candidate_group in [
+            *metadata_specs.get(category_label, []),
+            *legacy_specs.get(category_label, []),
+        ]:
+            normalized_group = tuple(str(column).strip() for column in candidate_group if str(column).strip())
+            if not normalized_group or normalized_group in seen:
+                continue
+            seen.add(normalized_group)
+            candidate_groups.append(list(normalized_group))
+        combined[category_label] = candidate_groups
+
+    return combined
+
+
+def accommodation_candidate_group_is_available(
+    source_df: pd.DataFrame,
+    candidate_group: list[str],
+) -> bool:
+    return bool(candidate_group) and all(column in source_df.columns for column in candidate_group)
+
+
+def get_available_accommodation_capacity_years(
+    source_df: pd.DataFrame,
+    spec_key: str,
+    indicator_metadata_df: pd.DataFrame | None = None,
+) -> list[int]:
+    spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
+    year_specs = cast(dict[int, dict[str, list[list[str]]]], spec["years"])
+    candidate_years = set(year_specs)
+
+    if indicator_metadata_df is not None and not indicator_metadata_df.empty:
+        metric_ids = {
+            metric_id
+            for metric_id_groups in ACCOMMODATION_CAPACITY_METRIC_IDS.get(spec_key, {}).values()
+            for metric_id_group in metric_id_groups
+            for metric_id in metric_id_group
+        }
+        if {"metric_id", "year"}.issubset(indicator_metadata_df.columns):
+            relevant_years = pd.to_numeric(
+                indicator_metadata_df.loc[
+                    indicator_metadata_df["metric_id"].astype(str).isin(metric_ids),
+                    "year",
+                ],
+                errors="coerce",
+            ).dropna()
+            candidate_years.update(int(year) for year in relevant_years.tolist())
+
+    available_years: list[int] = []
+    for year in sorted(candidate_years):
+        category_specs = get_accommodation_category_specs(spec_key, year, indicator_metadata_df)
+        if all(
+            any(
+                accommodation_candidate_group_is_available(source_df, candidate_group)
+                for candidate_group in category_specs.get(category_label, [])
+            )
+            for category_label in ACCOMMODATION_CAPACITY_CATEGORY_LABELS
+        ):
+            available_years.append(year)
+    return available_years
+
+
+def get_available_accommodation_growth_periods(
+    source_df: pd.DataFrame,
+    spec_key: str,
+    indicator_metadata_df: pd.DataFrame | None = None,
+) -> dict[str, tuple[int, int]]:
+    available_years = set(
+        get_available_accommodation_capacity_years(source_df, spec_key, indicator_metadata_df)
+    )
+    return {
+        label: period
+        for label, period in ACCOMMODATION_CAPACITY_GROWTH_PERIODS.items()
+        if period[0] in available_years and period[1] in available_years
+    }
+
+
 def sum_first_available_accommodation_columns(
     source_df: pd.DataFrame,
     candidate_groups: list[list[str]],
 ) -> float | None:
     for candidate_group in candidate_groups:
-        existing_columns = [column for column in candidate_group if column in source_df.columns]
-        if not existing_columns:
+        if not accommodation_candidate_group_is_available(source_df, candidate_group):
             continue
         total = 0.0
-        for column in existing_columns:
+        for column in candidate_group:
             total += float(pd.to_numeric(source_df[column], errors="coerce").sum(skipna=True))
         return total
     return None
@@ -1657,10 +1847,9 @@ def build_accommodation_capacity_structure_df(
     source_df: pd.DataFrame,
     spec_key: str,
     year: int,
+    indicator_metadata_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
-    spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
-    year_specs = cast(dict[int, dict[str, list[list[str]]]], spec["years"])
-    category_specs = year_specs.get(year, {})
+    category_specs = get_accommodation_category_specs(spec_key, year, indicator_metadata_df)
     missing_categories: list[str] = []
     rows: list[dict[str, Any]] = []
 
@@ -1706,11 +1895,24 @@ def render_accommodation_capacity_structure_tab(
     title: str,
     area_label: str,
     key_prefix: str,
+    indicator_metadata_df: pd.DataFrame | None = None,
 ) -> None:
+    available_years = get_available_accommodation_capacity_years(
+        source_df,
+        spec_key,
+        indicator_metadata_df,
+    )
+    if not available_years:
+        st.info(
+            "Za ta prikaz v trenutnem viru ni popolnega nabora podatkov "
+            "za vse tri vrste nastanitvenih kapacitet."
+        )
+        return
+
     selected_year = st.selectbox(
         "Leto",
-        ACCOMMODATION_CAPACITY_YEARS,
-        index=len(ACCOMMODATION_CAPACITY_YEARS) - 1,
+        available_years,
+        index=len(available_years) - 1,
         key=f"{key_prefix}_year",
     )
     spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
@@ -1726,6 +1928,7 @@ def render_accommodation_capacity_structure_tab(
             source_df,
             spec_key,
             selected_year,
+            indicator_metadata_df,
         )
         if structure_df.empty:
             render_accommodation_capacity_missing_message(
@@ -1755,11 +1958,22 @@ def build_accommodation_capacity_growth_df(
     spec_key: str,
     start_year: int,
     end_year: int,
+    indicator_metadata_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
     total_label = cast(str, spec["total_label"])
-    start_df, missing_start = build_accommodation_capacity_structure_df(source_df, spec_key, start_year)
-    end_df, missing_end = build_accommodation_capacity_structure_df(source_df, spec_key, end_year)
+    start_df, missing_start = build_accommodation_capacity_structure_df(
+        source_df,
+        spec_key,
+        start_year,
+        indicator_metadata_df,
+    )
+    end_df, missing_end = build_accommodation_capacity_structure_df(
+        source_df,
+        spec_key,
+        end_year,
+        indicator_metadata_df,
+    )
     missing_context = [
         *(f"{start_year}: {category}" for category in missing_start),
         *(f"{end_year}: {category}" for category in missing_end),
@@ -1848,15 +2062,34 @@ def render_accommodation_capacity_growth_tab(
     title: str,
     area_label: str,
     key_prefix: str,
+    indicator_metadata_df: pd.DataFrame | None = None,
 ) -> None:
-    period_labels = list(ACCOMMODATION_CAPACITY_GROWTH_PERIODS.keys())
+    available_periods = get_available_accommodation_growth_periods(
+        source_df,
+        spec_key,
+        indicator_metadata_df,
+    )
+    if not available_periods:
+        available_years = get_available_accommodation_capacity_years(
+            source_df,
+            spec_key,
+            indicator_metadata_df,
+        )
+        years_text = ", ".join(str(year) for year in available_years) or "nobeno leto"
+        st.info(
+            "Za izračun rasti sta potrebni najmanj dve leti s popolnimi podatki po vrstah. "
+            f"Trenutno so na voljo: {years_text}."
+        )
+        return
+
+    period_labels = list(available_periods)
     selected_period = st.selectbox(
         "Obdobje rasti",
         period_labels,
         index=len(period_labels) - 1,
         key=f"{key_prefix}_growth_period",
     )
-    start_year, end_year = ACCOMMODATION_CAPACITY_GROWTH_PERIODS[selected_period]
+    start_year, end_year = available_periods[selected_period]
     spec = ACCOMMODATION_CAPACITY_SPECS[spec_key]
     value_column_label = cast(str, spec["value_column_label"])
 
@@ -1870,6 +2103,7 @@ def render_accommodation_capacity_growth_tab(
             spec_key,
             start_year,
             end_year,
+            indicator_metadata_df,
         )
         if growth_df.empty:
             render_accommodation_capacity_missing_message(
@@ -5039,77 +5273,101 @@ def render_accommodation_capacity_structure(view_title: str, group_col: str, ctx
         area_label = str(chosen_muni_raw)
         source_df = area_df[area_df["Občine"].astype(str) == area_label].copy()
 
-    (
-        establishments_structure_tab,
-        establishments_growth_tab,
-        rooms_structure_tab,
-        rooms_growth_tab,
-        beds_structure_tab,
-        beds_growth_tab,
-    ) = st.tabs(
-        [
-            "Struktura nastanitvenih obratov po vrstah obratov",
-            "Rast števila nastanitvenih obratov po vrstah obratov in skupaj",
-            "Struktura po vrstah nastanitvenih kapacitet – sobe (nedeljive enote)",
-            "Rast obsega sob (nedeljivih enot) po vrstah nastanitvenih kapacitet in skupaj",
-            "Struktura po vrstah nastanitvenih kapacitet – stalna ležišča",
-            "Rast obsega stalnih ležišč po vrstah nastanitvenih kapacitet in skupaj",
-        ]
+    tab_definitions = [
+        {
+            "label": "Struktura obratov",
+            "kind": "structure",
+            "spec_key": "establishments",
+            "title": "Struktura nastanitvenih obratov po vrstah obratov",
+            "key_prefix": f"capacity_establishments_structure_{group_col}",
+        },
+        {
+            "label": "Rast števila obratov",
+            "kind": "growth",
+            "spec_key": "establishments",
+            "title": "Rast števila nastanitvenih obratov po vrstah obratov in skupaj",
+            "key_prefix": f"capacity_establishments_growth_{group_col}",
+        },
+        {
+            "label": "Struktura sob",
+            "kind": "structure",
+            "spec_key": "rooms",
+            "title": "Struktura po vrstah nastanitvenih kapacitet – sobe (nedeljive enote)",
+            "key_prefix": f"capacity_rooms_structure_{group_col}",
+        },
+        {
+            "label": "Rast obsega sob",
+            "kind": "growth",
+            "spec_key": "rooms",
+            "title": "Rast obsega sob (nedeljivih enot) po vrstah nastanitvenih kapacitet in skupaj",
+            "key_prefix": f"capacity_rooms_growth_{group_col}",
+        },
+        {
+            "label": "Struktura stalnih ležišč",
+            "kind": "structure",
+            "spec_key": "beds",
+            "title": "Struktura po vrstah nastanitvenih kapacitet – stalna ležišča",
+            "key_prefix": f"capacity_beds_structure_{group_col}",
+        },
+        {
+            "label": "Rast stalnih ležišč",
+            "kind": "growth",
+            "spec_key": "beds",
+            "title": "Rast obsega stalnih ležišč po vrstah nastanitvenih kapacitet in skupaj",
+            "key_prefix": f"capacity_beds_growth_{group_col}",
+        },
+    ]
+    available_tabs: list[dict[str, str]] = []
+    for tab_definition in tab_definitions:
+        spec_key = tab_definition["spec_key"]
+        if tab_definition["kind"] == "structure":
+            is_available = bool(
+                get_available_accommodation_capacity_years(
+                    source_df,
+                    spec_key,
+                    ctx.indicator_metadata_df,
+                )
+            )
+        else:
+            is_available = bool(
+                get_available_accommodation_growth_periods(
+                    source_df,
+                    spec_key,
+                    ctx.indicator_metadata_df,
+                )
+            )
+        if is_available:
+            available_tabs.append(tab_definition)
+
+    if not available_tabs:
+        st.info("Za izbrano območje trenutno ni popolnih podatkov o strukturi nastanitvenih kapacitet.")
+        return
+
+    st.caption(
+        "Prikazana so samo leta in primerjalna obdobja s popolnim naborom podatkov "
+        "za vse tri vrste kapacitet."
     )
-
-    with establishments_structure_tab:
-        render_accommodation_capacity_structure_tab(
-            source_df=source_df,
-            spec_key="establishments",
-            title="Struktura nastanitvenih obratov po vrstah obratov",
-            area_label=area_label,
-            key_prefix=f"capacity_establishments_structure_{group_col}",
-        )
-
-    with establishments_growth_tab:
-        render_accommodation_capacity_growth_tab(
-            source_df=source_df,
-            spec_key="establishments",
-            title="Rast števila nastanitvenih obratov po vrstah obratov in skupaj",
-            area_label=area_label,
-            key_prefix=f"capacity_establishments_growth_{group_col}",
-        )
-
-    with rooms_structure_tab:
-        render_accommodation_capacity_structure_tab(
-            source_df=source_df,
-            spec_key="rooms",
-            title="Struktura po vrstah nastanitvenih kapacitet – sobe (nedeljive enote)",
-            area_label=area_label,
-            key_prefix=f"capacity_rooms_structure_{group_col}",
-        )
-
-    with rooms_growth_tab:
-        render_accommodation_capacity_growth_tab(
-            source_df=source_df,
-            spec_key="rooms",
-            title="Rast obsega sob (nedeljivih enot) po vrstah nastanitvenih kapacitet in skupaj",
-            area_label=area_label,
-            key_prefix=f"capacity_rooms_growth_{group_col}",
-        )
-
-    with beds_structure_tab:
-        render_accommodation_capacity_structure_tab(
-            source_df=source_df,
-            spec_key="beds",
-            title="Struktura po vrstah nastanitvenih kapacitet – stalna ležišča",
-            area_label=area_label,
-            key_prefix=f"capacity_beds_structure_{group_col}",
-        )
-
-    with beds_growth_tab:
-        render_accommodation_capacity_growth_tab(
-            source_df=source_df,
-            spec_key="beds",
-            title="Rast obsega stalnih ležišč po vrstah nastanitvenih kapacitet in skupaj",
-            area_label=area_label,
-            key_prefix=f"capacity_beds_growth_{group_col}",
-        )
+    tabs = st.tabs([tab_definition["label"] for tab_definition in available_tabs])
+    for tab, tab_definition in zip(tabs, available_tabs):
+        with tab:
+            if tab_definition["kind"] == "structure":
+                render_accommodation_capacity_structure_tab(
+                    source_df=source_df,
+                    spec_key=tab_definition["spec_key"],
+                    title=tab_definition["title"],
+                    area_label=area_label,
+                    key_prefix=tab_definition["key_prefix"],
+                    indicator_metadata_df=ctx.indicator_metadata_df,
+                )
+            else:
+                render_accommodation_capacity_growth_tab(
+                    source_df=source_df,
+                    spec_key=tab_definition["spec_key"],
+                    title=tab_definition["title"],
+                    area_label=area_label,
+                    key_prefix=tab_definition["key_prefix"],
+                    indicator_metadata_df=ctx.indicator_metadata_df,
+                )
 
 
 def render_market_structure(view_title: str, group_col: str, ctx: DashboardContext) -> None:
