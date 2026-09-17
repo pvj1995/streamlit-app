@@ -3650,15 +3650,20 @@ def render_view(view_title: str, group_col: str, ctx: DashboardContext) -> None:
             st.subheader(f"Tabela območij \n \n **:blue[{get_indicator_display_name(map_indicator)}]**")
             table = region_agg[[group_col, map_indicator]].copy()
             agg_rule, _ = ctx.agg_rules.get(map_indicator, ("sum", None))
-            slovenia_total = df_slo_total_num.get(map_indicator, np.nan)
-            show_share_column = (
-                agg_rule == "sum"
-                and slovenia_total is not None
-                and not np.isnan(slovenia_total)
-                and float(slovenia_total) != 0.0
-            )
-            if show_share_column:
-                table["Delež Slovenije (%)"] = table[map_indicator].astype(float) / float(slovenia_total)
+            slovenia_total_raw = df_slo_total_num.get(map_indicator, np.nan)
+            slovenia_total: float | None = None
+            if slovenia_total_raw is not None:
+                try:
+                    candidate_total = float(slovenia_total_raw)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    if not np.isnan(candidate_total) and candidate_total != 0.0:
+                        slovenia_total = candidate_total
+
+            show_share_column = agg_rule == "sum" and slovenia_total is not None
+            if agg_rule == "sum" and slovenia_total is not None:
+                table["Delež Slovenije (%)"] = table[map_indicator].astype(float) / slovenia_total
             table = table.sort_values(map_indicator, ascending=is_lower_better(map_indicator), na_position="last")
             table[map_indicator] = table[map_indicator].apply(lambda value: format_indicator_value_tables(map_indicator, value))
             table = table.rename(columns={map_indicator: "Vrednost"})

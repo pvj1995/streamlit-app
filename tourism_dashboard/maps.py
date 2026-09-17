@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote
 
 import numpy as np
 import streamlit as st
@@ -14,6 +16,13 @@ from tourism_dashboard.helpers import get_indicator_display_name, normalize_name
 
 MUNICIPAL_DISPLAY_SIMPLIFY_TOLERANCE = 0.00010
 REGION_DISPLAY_SIMPLIFY_TOLERANCE = 0.0005
+CARTO_POSITRON_TILE_URL = (
+    "https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png"
+)
+CARTO_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+    'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+)
 
 
 if TYPE_CHECKING:
@@ -164,6 +173,59 @@ def _cache_key_digest(*parts: object) -> str:
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
+def get_carto_basemap_api_key() -> str:
+    try:
+        secret_value = st.secrets["CARTO_BASEMAP_API_KEY"]
+    except Exception:
+        secret_value = os.environ.get("CARTO_BASEMAP_API_KEY", "")
+    return str(secret_value or "").strip()
+
+
+def _basemap_cache_token() -> str:
+    api_key = get_carto_basemap_api_key()
+    return _cache_key_digest("carto", api_key) if api_key else "openstreetmap"
+
+
+def create_dashboard_map(
+    folium_module: Any,
+    *,
+    location: list[float],
+    max_bounds: bool,
+    min_zoom: int,
+    zoom_start: int | None = None,
+) -> Any:
+    map_kwargs: dict[str, Any] = {
+        "location": location,
+        "tiles": None,
+        "max_bounds": max_bounds,
+        "min_zoom": min_zoom,
+    }
+    if zoom_start is not None:
+        map_kwargs["zoom_start"] = zoom_start
+
+    map_obj = folium_module.Map(**map_kwargs)
+    api_key = get_carto_basemap_api_key()
+    if api_key:
+        tile_url = f"{CARTO_POSITRON_TILE_URL}?key={quote(api_key, safe='')}"
+        folium_module.TileLayer(
+            tiles=tile_url,
+            attr=CARTO_ATTRIBUTION,
+            name="CARTO Positron",
+            subdomains="abcd",
+            max_zoom=20,
+            overlay=False,
+            control=False,
+        ).add_to(map_obj)
+    else:
+        folium_module.TileLayer(
+            tiles="OpenStreetMap",
+            name="OpenStreetMap",
+            overlay=False,
+            control=False,
+        ).add_to(map_obj)
+    return map_obj
+
+
 def cache_key_for_regions_map(
     *,
     data_signature: str,
@@ -221,9 +283,9 @@ def build_regions_map_html(
         props["_vrednost_fmt"] = format_indicator_value_map(indicator_label, value)
         feature["properties"] = props
 
-    map_obj = folium_module.Map(
+    map_obj = create_dashboard_map(
+        folium_module,
         location=[45.65, 14.82],
-        tiles="cartodbpositron",
         zoom_start=8,
         max_bounds=True,
         min_zoom=7,
@@ -340,9 +402,9 @@ def build_municipalities_map_html(
     geojson_in = {"type": "FeatureCollection", "features": features_in}
     geojson_out = {"type": "FeatureCollection", "features": features_out}
 
-    map_obj = folium_module.Map(
+    map_obj = create_dashboard_map(
+        folium_module,
         location=[45.65, 14.82],
-        tiles="cartodbpositron",
         max_bounds=True,
         min_zoom=7,
     )
@@ -396,12 +458,15 @@ def _render_cached_map(
     build_html: Any,
 ) -> None:
     html = None
-    if cache_key is not None:
-        html = _map_html_cache().get(cache_key)
+    effective_cache_key = (
+        f"{cache_key}:basemap:{_basemap_cache_token()}" if cache_key is not None else None
+    )
+    if effective_cache_key is not None:
+        html = _map_html_cache().get(effective_cache_key)
     if html is None:
         html = build_html()
-        if cache_key is not None and html is not None:
-            _map_html_cache()[cache_key] = html
+        if effective_cache_key is not None and html is not None:
+            _map_html_cache()[effective_cache_key] = html
     if html is None:
         st.info("Zemljevid ni na voljo (manjka folium ali GeoJSON).")
         return

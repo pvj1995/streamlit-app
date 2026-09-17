@@ -161,6 +161,7 @@ APP_PASSWORD = "your-password"
 DATA_BACKEND = "database"
 DASHBOARD_DB_CONNECTION_NAME = "ai_cache_db"
 AI_CACHE_CONNECTION_NAME = "ai_cache_db"
+CARTO_BASEMAP_API_KEY = "cb1_..."
 
 [connections.ai_cache_db]
 url = "postgresql://USER:PASSWORD@HOST:5432/postgres"
@@ -179,6 +180,8 @@ Secrets:
 - `DATA_BACKEND`: `excel` or `database`
 - `DASHBOARD_DB_CONNECTION_NAME`: Streamlit SQL connection used for dashboard data
 - `AI_CACHE_CONNECTION_NAME`: Streamlit SQL connection used for AI cache
+- `CARTO_BASEMAP_API_KEY`: CARTO basemap key used by the Leaflet maps; add the same
+  value to the deployed Streamlit app's secrets
 - `OPENAI_API_KEY`: optional
 - `OPENAI_MODEL`: optional, defaults in code if omitted
 
