@@ -5223,7 +5223,7 @@ def render_compass_destination_index(ctx: DashboardContext, logo_path: Any | Non
                 axis_span > 0
                 and abs(unweighted_mean - float(slovenia_index_value)) / axis_span < 0.18
             )
-        mean_annotation_y = 1.12 if reference_labels_overlap else 1.04
+        mean_annotation_y = 1.16 if reference_labels_overlap else 1.04
         unweighted_mean_label = (
             f"Netehtano povprečje: {format_si_number(unweighted_mean, decimal_places)}"
         )
@@ -5276,7 +5276,7 @@ def render_compass_destination_index(ctx: DashboardContext, logo_path: Any | Non
         fig.update_layout(
             title=f"{selected_metric_label} - {selected_area_level}",
             height=max(420, min(1100, 32 * len(chart_df) + 140)),
-            margin=dict(l=20, r=70, t=125 if reference_labels_overlap else 95, b=30),
+            margin=dict(l=20, r=70, t=145 if reference_labels_overlap else 95, b=30),
             coloraxis_showscale=False,
             yaxis_title=None,
         )
