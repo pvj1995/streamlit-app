@@ -143,16 +143,15 @@ NATIONAL_KPI_SHEET_NAME = "KPI_long"
 NATIONAL_KPI_MARKET_ANALYSIS_SHEET_NAME = "I55_market_analysis_long"
 NATIONAL_KPI_INVESTMENTS_SHEET_NAME = "I55_investments_long"
 NATIONAL_KPI_INVESTMENTS_SUMMARY_SHEET_NAME = "I55_investments_summary"
-COMPASS_INDEX_XLSX_FILENAME = "Razvojni indeks turističnih destinacij.xlsx"
+COMPASS_INDEX_XLSX_FILENAME = "COMPASS Index - database input.xlsx"
 COMPASS_INDEX_SHEETS = [
-    "compass_area_levels",
-    "compass_index_groups",
+    "compass_datasets",
+    "compass_values",
     "compass_metrics",
-    "compass_metric_components",
-    "compass_area_mapping",
-    "compass_values_long",
-    "compass_aggregation_rules",
-    "compass_weight_rules",
+    "compass_area_levels",
+    "compass_areas",
+    "compass_area_years",
+    "compass_memberships",
     "compass_explanation",
 ]
 

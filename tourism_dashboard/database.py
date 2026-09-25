@@ -122,7 +122,12 @@ def load_dashboard_data_signature(connection_name: str) -> str:
 
 
 @st.cache_data(show_spinner=False, ttl=DASHBOARD_DB_CACHE_TTL_SECONDS)
-def load_dashboard_frame(connection_name: str, frame_key: str) -> pd.DataFrame:
+def load_dashboard_frame(
+    connection_name: str,
+    frame_key: str,
+    data_signature: str | None = None,
+) -> pd.DataFrame:
+    del data_signature  # Included in the cache key so newly imported frames invalidate old data.
     conn = _get_connection(connection_name)
     meta_df = conn.query(
         """
@@ -291,10 +296,15 @@ def load_national_kpi_investments_summary_dataframe_from_db() -> pd.DataFrame:
     return load_dashboard_frame(get_dashboard_connection_name(), DASHBOARD_NATIONAL_KPI_INVESTMENTS_SUMMARY_FRAME_KEY)
 
 
-def load_compass_dataframe_from_db(sheet_name: str) -> pd.DataFrame:
+def load_compass_dataframe_from_db(
+    sheet_name: str,
+    *,
+    data_signature: str | None = None,
+) -> pd.DataFrame:
     return load_dashboard_frame(
         get_dashboard_connection_name(),
         f"{DASHBOARD_COMPASS_FRAME_PREFIX}:{sheet_name}",
+        data_signature=data_signature,
     )
 
 

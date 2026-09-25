@@ -135,13 +135,12 @@ Schema file: [db/dashboard_frames.sql](./db/dashboard_frames.sql).
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
 ```
 
 ### 2. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
 ### 3. Configure Secrets
@@ -268,8 +267,11 @@ python scripts/import_excel_to_db.py
 ## Running The App
 
 ```bash
-streamlit run streamlit_app_sandbox.py
+.venv/bin/python -m streamlit run streamlit_app_sandbox.py
 ```
+
+Ne uporabljaj sistemskega ukaza `streamlit run ...`, saj lahko zažene drugo
+različico Streamlita in drugo Python okolje od tistega iz `.venv`.
 
 On first load, sign in with `APP_PASSWORD`.
 
@@ -294,7 +296,7 @@ Recommended server steps:
 Example Streamlit command:
 
 ```bash
-streamlit run streamlit_app_sandbox.py --server.address 127.0.0.1 --server.port 8501
+.venv/bin/python -m streamlit run streamlit_app_sandbox.py --server.address 127.0.0.1 --server.port 8501
 ```
 
 ## Streamlit Community Cloud

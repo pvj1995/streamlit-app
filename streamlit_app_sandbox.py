@@ -4,6 +4,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from packaging.version import Version
 
 from tourism_dashboard.auth import require_password
 from tourism_dashboard.assets import render_page_header
@@ -237,6 +238,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+MIN_STREAMLIT_VERSION = "1.52.0"
+if Version(st.__version__) < Version(MIN_STREAMLIT_VERSION):
+    st.error(
+        f"Aplikacija zahteva Streamlit {MIN_STREAMLIT_VERSION} ali novejši, "
+        f"trenutno pa je zagnana različica {st.__version__}."
+    )
+    st.code(".venv/bin/python -m streamlit run streamlit_app_sandbox.py", language="bash")
+    st.stop()
 
 require_password()
 
